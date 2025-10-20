@@ -8,7 +8,9 @@ st.markdown("""
 /* Global styles */
 .stApp {
     background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    font-family: "Segoe UI", Roboto, sans-serif;
+    font-family: "Sitka Display Semibold", "Sitka Display", "Segoe UI", Roboto, sans-serif;
+    text-align: center;
+    font-size: 18px;
 }
 
 /* Sidebar styling */
@@ -469,7 +471,7 @@ def make_daily_pdm_distribution(data, Pdm_max_val):
     total_days = len(dates)
     
     summary_text = f"""**Recorded Power Statistics:**
-- Total recorded samples: {valid_samples}/{total_samples} samples with power greater than 0 (Pdo > 0 MW)
+- Total recorded samples: {valid_samples}/{total_samples} samples with power greater than 0 (Pdo > 0 MW.
 - The total number of samples with power P ≥ 50% of Pdm is {samples_above_50} sample(s), and there are {days_above_50}/{total_days} days during which the plant generated power above 50%."""
     
     return df_distribution, summary_text
@@ -596,7 +598,7 @@ with st.sidebar:
     st.markdown("### Configuration")
     st.markdown("---")
     
-    st.markdown("#### 📁 Data Source")
+    st.markdown("#### Data Source")
     uploaded_files = st.file_uploader(
         "Upload Excel files (.xlsx)",
         type=["xlsx"],
@@ -969,7 +971,6 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                 mime = "application/octet-stream"
             href = f'<a href="data:{mime};base64,{b64}" download="{filename}" target="_blank" style="text-decoration:none;"><button style="background: linear-gradient(90deg, #3498db 0%, #2980b9 100%); color: white; border: none; border-radius: 8px; padding: 0.75rem 1.5rem; font-weight: 600; cursor: pointer; width: 100%; box-shadow: 0px 4px 10px rgba(52, 152, 219, 0.3);">{icon} {label}</button></a>'
             return href
-
         c1, c2, c3 = st.columns(3)
         c1.markdown(get_download_link(result['excel_path'], f"Output_{selected_file}.xlsx", "Excel Report", "📘"), unsafe_allow_html=True)
         c2.markdown(get_download_link(result['png_path'], f"Output_{selected_file}.png", "Charts (PNG)", "🖼️"), unsafe_allow_html=True)
