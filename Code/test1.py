@@ -203,6 +203,22 @@ body, p, label, span, div {
     letter-spacing: 0.3px;
     line-height: 1.5;
 }
+
+
+/* Tab styling - make text larger and bold */
+.stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+    font-size: 1.3rem !important;
+    font-weight: 700 !important;
+    color: #2c3e50 !important;
+}
+
+.stTabs [data-baseweb="tab-list"] button {
+    padding: 1rem 1.5rem !important;
+}
+
+.stTabs [data-baseweb="tab-list"] button[aria-selected="true"] [data-testid="stMarkdownContainer"] p {
+    color: #3498db !important;
+}          
 </style>
 """, unsafe_allow_html=True)
 
