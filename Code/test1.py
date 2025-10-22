@@ -1139,9 +1139,7 @@ if st.session_state.processing_complete and st.session_state.processed_data:
 
 
         if 'pdm_detailed_info' in tables and tables['pdm_detailed_info']:
-            st.markdown("---")
-            st.markdown("### 📅 Valid Days Analysis (Ptot ≥ 50% Pdm)")
-            
+            st.markdown("---")            
             info = tables['pdm_detailed_info']
             
             # Statistics cards
@@ -1426,5 +1424,5 @@ elif not st.session_state.processing_complete:
             <div style="color: #7f8c8d; margin-top: 0.5rem;">Download Excel, PDF, and PNG reports</div>
         </div>
         """, unsafe_allow_html=True)
-        #20251022
+        
         
