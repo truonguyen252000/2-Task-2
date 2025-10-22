@@ -443,54 +443,94 @@ def make_current_harmonics_by_pdm(data, bins, labels):
 
 def make_daily_pdm_distribution(data, Pdm_max_val):
     if "Time [UTC]" not in data.columns or "Ptot+(Avg) [W]" not in data.columns:
-        return pd.DataFrame(), ""
+        return pd.DataFrame(), "", {}
     
     data_copy = data.copy()
     data_copy["Date"] = pd.to_datetime(data_copy["Time [UTC]"], errors='coerce').dt.date
     data_copy = data_copy.dropna(subset=["Date"])
     
     if len(data_copy) == 0:
-        return pd.DataFrame(), ""
+        return pd.DataFrame(), "", {}
     
     data_copy["%Pdm"] = (data_copy["Ptot+(Avg) [W]"] / Pdm_max_val * 100)
     pdm_ranges = [(i*10, (i+1)*10) for i in range(10)]
     pdm_labels = [f"{i*10}%" for i in range(1, 11)]
     dates = sorted(data_copy["Date"].unique())
     
+    # Phân loại ngày đạt yêu cầu và không đạt
+    valid_dates = []
+    invalid_dates = []
+    valid_dates_samples = {}  # Lưu số mẫu của mỗi ngày đạt yêu cầu
+    
+    for date in dates:
+        date_data = data_copy[data_copy["Date"] == date]
+        if (date_data["%Pdm"] >= 50).any():
+            valid_dates.append(date)
+            valid_dates_samples[date] = len(date_data)  # Tổng số mẫu của ngày đó
+        else:
+            invalid_dates.append(date)
+    
     rows = []
+    total_counts = [0] * len(pdm_ranges)
+    
     for idx, date in enumerate(dates, 1):
         date_data = data_copy[data_copy["Date"] == date]
         row = [idx, date.strftime("%d/%m/%Y")]
-        
-        for lower, upper in pdm_ranges:
-            if lower == 0:
-                count = len(date_data[(date_data["%Pdm"] > lower) & (date_data["%Pdm"] <= upper)])
+        for i, (lower, upper) in enumerate(pdm_ranges):
+            if i == 0:
+                count = len(date_data[(date_data["%Pdm"] > 0) & (date_data["%Pdm"] <= upper)])
             else:
                 count = len(date_data[(date_data["%Pdm"] > lower) & (date_data["%Pdm"] <= upper)])
             row.append(count)
+            total_counts[i] += count
+        
+        if date in valid_dates:
+            row.append(f"✓ Valid ({len(date_data)} samples)")
+        else:
+            row.append(f"✗ Invalid ({len(date_data)} samples)")
         
         rows.append(row)
     
-    columns = ["Index", "Date"] + pdm_labels
+    # Thêm dòng Total
+    total_row = ["", "TOTAL"] + total_counts + [""]
+    rows.append(total_row)
+    
+    columns = ["Index", "Date"] + pdm_labels + ["Status"]
     df_distribution = pd.DataFrame(rows, columns=columns)
     
     total_samples = len(data)
     valid_samples = len(data[data["Ptot+(Avg) [W]"] > 0])
-    samples_above_50 = len(data_copy[data_copy["%Pdm"] >= 50])
     
-    days_above_50 = 0
-    for date in dates:
-        date_data = data_copy[data_copy["Date"] == date]
-        if len(date_data[date_data["%Pdm"] >= 50]) > 0:
-            days_above_50 += 1
+    # Tính tổng số mẫu có Pdm >= 50%
+    samples_above_50 = sum(total_counts[4:])
+    
+    # Tính tổng số mẫu của các ngày đạt yêu cầu
+    total_valid_days_samples = sum(valid_dates_samples.values())
     
     total_days = len(dates)
+    valid_days_count = len(valid_dates)
+    invalid_days_count = len(invalid_dates)
     
     summary_text = f"""**Recorded Power Statistics:**
-- Total recorded samples: {valid_samples}/{total_samples} samples with power greater than 0 (Pdo > 0 MW.
-- The total number of samples with power P ≥ 50% of Pdm is {samples_above_50} sample(s), and there are {days_above_50}/{total_days} days during which the plant generated power above 50%."""
+- Total measurement period: **{total_days} days**
+- **Valid days (≥ 50% Pdm): {valid_days_count} days** ✅
+- Invalid days (< 50% Pdm): {invalid_days_count} days ❌
+- **Total samples from valid days: {total_valid_days_samples:,} samples**
+- Total recorded samples: {valid_samples:,}/{total_samples:,} samples with power > 0 W (Ptot > 0 W)
+- Total samples with P ≥ 50% Pdm: **{samples_above_50:,} samples** 
+
+**Note:** Only data from valid days are used for further analysis."""
     
-    return df_distribution, summary_text
+    # Thông tin chi tiết về các ngày đạt yêu cầu
+    detailed_info = {
+        'total_days': total_days,
+        'valid_days_count': valid_days_count,
+        'invalid_days_count': invalid_days_count,
+        'total_valid_days_samples': total_valid_days_samples,
+        'valid_dates_samples': valid_dates_samples
+    }
+    
+    return df_distribution, summary_text, detailed_info
 
 def plot_and_save(data, file_name, out_folder):
     groups = {"Pst": cols_pst, "THDu (%)": cols_thdu, "TDDi (%)": cols_tddi, "Plt": cols_plt}
@@ -724,6 +764,7 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     continue
             
             data = pd.read_excel(xls, sheet_name=sheet_to_read)
+            data_raw = data.copy()  
 
             if "Time [UTC]" in data.columns:
                 time_col = data["Time [UTC]"].copy()
@@ -734,10 +775,53 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             data = data.replace("-", np.nan)
             data = data.apply(pd.to_numeric, errors="ignore")
             
-            if "Ptot+(Avg) [W]" in data.columns:
-                invalid_mask = (data["Ptot+(Avg) [W]"].isna()) | (data["Ptot+(Avg) [W]"] <= 0)
-                if invalid_mask.any():
-                    data = data[~invalid_mask]
+            # BƯỚC 1: Lọc theo ngày đạt yêu cầu (có ít nhất 1 mẫu Ptot >= 50% Pdm)
+            data_for_plt = None
+            data_for_plt_6to18 = None
+            
+            if "Ptot+(Avg) [W]" in data.columns and time_col is not None:
+                # Thêm cột Date và Time để phân loại
+                data_temp = data.copy()
+                data_temp["Date"] = pd.to_datetime(time_col.loc[data_temp.index], errors='coerce').dt.date
+                data_temp["Time"] = pd.to_datetime(time_col.loc[data_temp.index], errors='coerce')
+                data_temp = data_temp.dropna(subset=["Date"])
+                
+                if len(data_temp) > 0:
+                    # Tính %Pdm cho mỗi mẫu
+                    data_temp["%Pdm"] = (data_temp["Ptot+(Avg) [W]"] / Pdm_max * 100)
+                    
+                    # Tìm các ngày đạt yêu cầu (có ít nhất 1 mẫu >= 50% Pdm)
+                    valid_dates = []
+                    for date in data_temp["Date"].unique():
+                        date_data = data_temp[data_temp["Date"] == date]
+                        if (date_data["%Pdm"] >= 50).any():
+                            valid_dates.append(date)
+                    
+                    # Lọc chỉ giữ lại dữ liệu của các ngày đạt yêu cầu
+                    if len(valid_dates) > 0:
+                        data_valid_days = data_temp[data_temp["Date"].isin(valid_dates)].copy()
+                        status_text.info(f"📅 Found {len(valid_dates)} valid days (with Ptot ≥ 50% Pdm) out of {len(data_temp['Date'].unique())} total days")
+                        
+                        # Tạo data cho Plt (toàn bộ ngày)
+                        data_for_plt = data_valid_days.drop(columns=["Date", "%Pdm", "Time"]).copy()
+                        
+                        # Tạo data cho Plt 6:00-18:00
+                        data_valid_days["Hour"] = data_valid_days["Time"].dt.hour
+                        data_6to18 = data_valid_days[(data_valid_days["Hour"] >= 6) & (data_valid_days["Hour"] < 18)].copy()
+                        data_for_plt_6to18 = data_6to18.drop(columns=["Date", "%Pdm", "Time", "Hour"]).copy()
+                        
+                        # BƯỚC 2: Lọc thêm Ptot > 0 cho các bảng còn lại
+                        data = data_valid_days.copy()
+                        invalid_mask = (data["Ptot+(Avg) [W]"].isna()) | (data["Ptot+(Avg) [W]"] <= 0)
+                        if invalid_mask.any():
+                            data = data[~invalid_mask]
+                        data = data.drop(columns=["Date", "%Pdm", "Time"], errors='ignore')
+                        if "Hour" in data.columns:
+                            data = data.drop(columns=["Hour"])
+                    else:
+                        status_text.warning(f"⚠️ {name}: No valid days found (no day with Ptot ≥ 50% Pdm) — skipping")
+                        progress_bar.progress(int(idx/len(files_to_process)*100))
+                        continue
             
             data = data.fillna(0)
             if time_col is not None:
@@ -746,19 +830,75 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
 
             stat_summary_pst = pd.DataFrame()
             stat_summary_plt = pd.DataFrame()
+            stat_summary_plt_6to18 = pd.DataFrame()
+            table_plt_24h = pd.DataFrame()
+            table_plt_6to18 = pd.DataFrame()
             stat_summary_uneg = pd.DataFrame()
             stat_summary_vh = pd.DataFrame()
             stat_summary_ch = pd.DataFrame()
             daily_pdm_table = pd.DataFrame()
             daily_summary_text = ""
+            
+            # TÍNH TOÁN PLT (ưu tiên, chỉ cần Ptot >= 50% Pdm)
+            if data_for_plt is not None and all(c in data_for_plt.columns for c in cols_plt):
+                total_samples_from_valid_days = len(data_for_plt)
+                table_plt_24h = make_table(data_for_plt, cols_plt)
+                plt_sample_count = total_samples_from_valid_days / 12
+                
+                for row_name in ["No. of samples", "No. of pass samples", "No. of fail samples"]:
+                    if row_name in table_plt_24h.index:
+                        table_plt_24h.loc[row_name] = table_plt_24h.loc[row_name] / 12
+                
+                # Plt Statistics (Overall) cho toàn bộ ngày
+                plt_stats = []
+                for col in cols_plt:
+                    mx = data_for_plt[col].max()
+                    mn = data_for_plt[col].min()
+                    avg = data_for_plt[col].mean()
+                    plt_stats.extend([mx, avg, mn])
+                
+                plt_columns = pd.MultiIndex.from_tuples([
+                    ("Phase A", "Max"), ("Phase A", "AVG"), ("Phase A", "Min"),
+                    ("Phase B", "Max"), ("Phase B", "AVG"), ("Phase B", "Min"),
+                    ("Phase C", "Max"), ("Phase C", "AVG"), ("Phase C", "Min")
+                ])
+                stat_summary_plt = pd.DataFrame([plt_stats], columns=plt_columns)
+                stat_summary_plt.index = ["Overall (24h)"]
+                stat_summary_plt.index.name = "Statistic"
+                stat_summary_plt = stat_summary_plt.round(3)
+            
+            if data_for_plt_6to18 is not None and len(data_for_plt_6to18) > 0 and all(c in data_for_plt_6to18.columns for c in cols_plt):
+                # Plt cho 6:00-18:00
+                table_plt_6to18 = make_table(data_for_plt_6to18, cols_plt)
+                # Chia cho 12 cho các dòng số lượng mẫu
+                for row_name in ["No. of samples", "No. of pass samples", "No. of fail samples"]:
+                    if row_name in table_plt_6to18.index:
+                        table_plt_6to18.loc[row_name] = table_plt_6to18.loc[row_name] / 12
+                
+                # Plt Statistics (Overall) cho 6:00-18:00
+                plt_stats_6to18 = []
+                for col in cols_plt:
+                    mx = data_for_plt_6to18[col].max()
+                    mn = data_for_plt_6to18[col].min()
+                    avg = data_for_plt_6to18[col].mean()
+                    plt_stats_6to18.extend([mx, avg, mn])
+                
+                plt_columns = pd.MultiIndex.from_tuples([
+                    ("Phase A", "Max"), ("Phase A", "AVG"), ("Phase A", "Min"),
+                    ("Phase B", "Max"), ("Phase B", "AVG"), ("Phase B", "Min"),
+                    ("Phase C", "Max"), ("Phase C", "AVG"), ("Phase C", "Min")
+                ])
+                stat_summary_plt_6to18 = pd.DataFrame([plt_stats_6to18], columns=plt_columns)
+                stat_summary_plt_6to18.index = ["Overall (6:00-18:00)"]
+                stat_summary_plt_6to18.index.name = "Statistic"
+                stat_summary_plt_6to18 = stat_summary_plt_6to18.round(3)
 
             if "Ptot+(Avg) [W]" in data.columns:
                 Pdm_max_val = Pdm_max
                 if pd.isna(Pdm_max_val) or Pdm_max_val <= 0:
                     pass
                 else:
-                    daily_pdm_table, daily_summary_text = make_daily_pdm_distribution(data, Pdm_max_val)
-                    
+                    daily_pdm_table, daily_summary_text, pdm_detailed_info = make_daily_pdm_distribution(data, Pdm_max_val)                    
                     bins = []
                     labels = []
                     for i in range(1, 11):
@@ -771,9 +911,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     stat_summary_ch = make_current_harmonics_by_pdm(data, bins, labels)
                     
                     rows_pst = []
-                    rows_plt = []
                     rows_uneg = []
-                    required_stat_cols = {"Pst": cols_pst, "Plt": cols_plt, "Uneg": cols_uneg}
+                    required_stat_cols = {"Pst": cols_pst, "Uneg": cols_uneg}
                     
                     for (lower, upper), label in zip(bins, labels):
                         if lower <= 0:
@@ -796,19 +935,6 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                             pst_vals.append((mx, avg, mn))
                         rows_pst.append([label] + [v for triple in pst_vals for v in triple])
                         
-                        plt_vals = []
-                        for col in required_stat_cols["Plt"]:
-                            if col in data.columns and count > 0:
-                                mx = df_bin[col].max()
-                                mn = df_bin[col].min()
-                                avg = df_bin[col].mean()
-                            else:
-                                mx = np.nan
-                                mn = np.nan
-                                avg = np.nan
-                            plt_vals.append((mx, avg, mn))
-                        rows_plt.append([label] + [v for triple in plt_vals for v in triple])
-                        
                         ucol = required_stat_cols["Uneg"][0]
                         if ucol in data.columns and count > 0:
                             mx = df_bin[ucol].max()
@@ -821,27 +947,23 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                         rows_uneg.append([label, mx, avg, mn])
                     
                     pst_columns = pd.MultiIndex.from_tuples([
-                        ("Pha A", "Max"), ("Pha A", "AVG"), ("Pha A", "Min"),
-                        ("Pha B", "Max"), ("Pha B", "AVG"), ("Pha B", "Min"),
-                        ("Pha C", "Max"), ("Pha C", "AVG"), ("Pha C", "Min")
+                        ("Phase A", "Max"), ("Phase A", "AVG"), ("Phase A", "Min"),
+                        ("Phase B", "Max"), ("Phase B", "AVG"), ("Phase B", "Min"),
+                        ("Phase C", "Max"), ("Phase C", "AVG"), ("Phase C", "Min")
                     ])
                     pst_df = pd.DataFrame([r[1:] for r in rows_pst], index=[r[0] for r in rows_pst], columns=pst_columns)
                     pst_df.index.name = "%Pdm"
-                    
-                    plt_df = pd.DataFrame([r[1:] for r in rows_plt], index=[r[0] for r in rows_plt], columns=pst_columns)
-                    plt_df.index.name = "%Pdm"
                     
                     uneg_df = pd.DataFrame([r[1:] for r in rows_uneg], index=[r[0] for r in rows_uneg], columns=["Max", "AVG", "Min"])
                     uneg_df.index.name = "%Pdm"
                     
                     stat_summary_pst = pst_df.round(3)
-                    stat_summary_plt = plt_df.round(3)
                     stat_summary_uneg = uneg_df.round(3)
 
+            # TÍNH TOÁN CÁC BẢNG CÒN LẠI (sau khi lọc Ptot > 0)
             table_pst = make_table(data, cols_pst) if all(c in data.columns for c in cols_pst) else pd.DataFrame()
             table_thdu = make_table(data, cols_thdu) if all(c in data.columns for c in cols_thdu) else pd.DataFrame()
             table_tddi = make_table(data, cols_tddi) if all(c in data.columns for c in cols_tddi) else pd.DataFrame()
-            table_plt = make_table(data, cols_plt) if all(c in data.columns for c in cols_plt) else pd.DataFrame()
             table_uneg = make_table(data, cols_uneg) if all(c in data.columns for c in cols_uneg) else pd.DataFrame()
             table_vh_order = make_voltage_harmonics_detail(data)
             table_ch_order = make_current_harmonics_detail(data)
@@ -867,8 +989,13 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     save_table_to_excel(writer, table_thdu, "THDu")
                 if not table_tddi.empty:
                     save_table_to_excel(writer, table_tddi, "TDDi")
-                if not table_plt.empty:
-                    save_table_to_excel(writer, table_plt, "Plt")
+                
+                # Plt tables (24h and 6-18)
+                if not table_plt_24h.empty:
+                    save_table_to_excel(writer, table_plt_24h, "Plt_24h")
+                if not table_plt_6to18.empty:
+                    save_table_to_excel(writer, table_plt_6to18, "Plt_6to18")
+                
                 if not table_uneg.empty:
                     save_table_to_excel(writer, table_uneg, "u0Avg")
                 table_vh_order.to_excel(writer, sheet_name="Voltage Harmonics by Order")
@@ -881,7 +1008,9 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     if not stat_summary_pst.empty:
                         stat_summary_pst.to_excel(writer, sheet_name="Power_Stats_Pst", startrow=1)
                     if not stat_summary_plt.empty:
-                        stat_summary_plt.to_excel(writer, sheet_name="Power_Stats_Plt", startrow=1)
+                        stat_summary_plt.to_excel(writer, sheet_name="Plt_Statistics_24h", startrow=1)
+                    if not stat_summary_plt_6to18.empty:
+                        stat_summary_plt_6to18.to_excel(writer, sheet_name="Plt_Statistics_6to18", startrow=1)
                     if not stat_summary_uneg.empty:
                         stat_summary_uneg.to_excel(writer, sheet_name="Power_Stats_Uneg", startrow=1)
                     if not stat_summary_vh.empty:
@@ -897,7 +1026,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                 "Pst": table_pst,
                 "THDu": table_thdu,
                 "TDDi": table_tddi,
-                "Plt": table_plt,
+                "Plt (24h)": table_plt_24h,
+                "Plt (6:00-18:00)": table_plt_6to18,
                 "u0Avg": table_uneg,
                 "Voltage Harmonics by Order": table_vh_order,
                 "Current Harmonics by Order": table_ch_order
@@ -907,7 +1037,9 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             if not stat_summary_pst.empty:
                 tables_for_pdf["Pst by %Pdm"] = stat_summary_pst
             if not stat_summary_plt.empty:
-                tables_for_pdf["Plt by %Pdm"] = stat_summary_plt
+                tables_for_pdf["Plt Statistics (24h)"] = stat_summary_plt
+            if not stat_summary_plt_6to18.empty:
+                tables_for_pdf["Plt Statistics (6:00-18:00)"] = stat_summary_plt_6to18
             if not stat_summary_uneg.empty:
                 tables_for_pdf["Uneg by %Pdm"] = stat_summary_uneg
             if not stat_summary_vh.empty:
@@ -919,21 +1051,27 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
 
             st.session_state.processed_data[base_name] = {
                 'data': data.copy(),
+                'data_raw': data_raw,
+
                 'tables': {
                     'table_pst': table_pst,
                     'table_thdu': table_thdu,
                     'table_tddi': table_tddi,
-                    'table_plt': table_plt,
+                    'table_plt_24h': table_plt_24h,
+                    'table_plt_6to18': table_plt_6to18,
                     'table_uneg': table_uneg,
                     'table_vh_order': table_vh_order,
                     'table_ch_order': table_ch_order,
                     'stat_summary_pst': stat_summary_pst,
                     'stat_summary_plt': stat_summary_plt,
+                    'stat_summary_plt_6to18': stat_summary_plt_6to18,
                     'stat_summary_uneg': stat_summary_uneg,
                     'stat_summary_vh': stat_summary_vh,
                     'stat_summary_ch': stat_summary_ch,
                     'daily_pdm_table': daily_pdm_table,
-                    'daily_summary_text': daily_summary_text
+                    'daily_summary_text': daily_summary_text,
+                    'pdm_detailed_info': pdm_detailed_info 
+
                 },
                 'excel_path': out_excel_path,
                 'png_path': out_png_path,
@@ -997,8 +1135,65 @@ if st.session_state.processing_complete and st.session_state.processed_data:
         if tables['daily_summary_text']:
             st.markdown("---")
             st.info(tables['daily_summary_text'])
-        
-        # Data preview with tabs
+
+
+
+        if 'pdm_detailed_info' in tables and tables['pdm_detailed_info']:
+            st.markdown("---")
+            st.markdown("### 📅 Valid Days Analysis (Ptot ≥ 50% Pdm)")
+            
+            info = tables['pdm_detailed_info']
+            
+            # Statistics cards
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f"""
+                <div class="stat-card">
+                    <div class="stat-number">{info['valid_days_count']}</div>
+                    <div class="stat-label">Valid Days</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="stat-card">
+                    <div class="stat-number">{info['total_valid_days_samples']:,}</div>
+                    <div class="stat-label">Total Samples (All Valid Days)</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                avg_samples = info['total_valid_days_samples'] / info['valid_days_count'] if info['valid_days_count'] > 0 else 0
+                st.markdown(f"""
+                <div class="stat-card">
+                    <div class="stat-number">{avg_samples:.0f}</div>
+                    <div class="stat-label">Avg Samples/Day</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Detailed table with expander
+            with st.expander("📊 View Detailed Breakdown by Date", expanded=False):
+                valid_dates_df = pd.DataFrame([
+                    {
+                        'No.': idx,
+                        'Date': date.strftime("%d/%m/%Y"),
+                        'Samples': samples,
+                        # 'Status': '✅ Valid (≥50% Pdm)'
+                    }
+                    for idx, (date, samples) in enumerate(sorted(info['valid_dates_samples'].items()), 1)
+                ])
+                
+                # Add total row
+                total_row = pd.DataFrame([{
+                    'No.': '',
+                    'Date': 'TOTAL',
+                    'Samples': info['total_valid_days_samples'],
+                    'Status': f"{info['valid_days_count']} days"
+                }])
+                valid_dates_df = pd.concat([valid_dates_df, total_row], ignore_index=True)
+                
+                st.dataframe(valid_dates_df, use_container_width=True, hide_index=True)
+
         st.markdown("---")
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Summary Tables", "📊 Harmonics Details", "⚡ Power Statistics", "📈 Raw Data", "🎨 Custom Plot"])
         
@@ -1008,9 +1203,12 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                 if not tables['table_pst'].empty:
                     st.markdown("##### Pst Summary")
                     st.dataframe(tables['table_pst'], use_container_width=True)
-                if not tables['table_plt'].empty:
-                    st.markdown("##### Plt Summary")
-                    st.dataframe(tables['table_plt'], use_container_width=True)
+                if not tables['table_plt_24h'].empty:
+                    st.markdown("##### Plt Summary (24h) - Divided by 12")
+                    st.dataframe(tables['table_plt_24h'], use_container_width=True)
+                if not tables['table_plt_6to18'].empty:
+                    st.markdown("##### Plt Summary (6:00-18:00) - Divided by 12")
+                    st.dataframe(tables['table_plt_6to18'], use_container_width=True)
             with col2:
                 if not tables['table_thdu'].empty:
                     st.markdown("##### THD U Summary")
@@ -1044,13 +1242,18 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                 if not tables['stat_summary_pst'].empty:
                     st.markdown("##### Pst by %Pdm")
                     st.dataframe(tables['stat_summary_pst'], use_container_width=True)
-                if not tables['stat_summary_plt'].empty:
-                    st.markdown("##### Plt by %Pdm")
-                    st.dataframe(tables['stat_summary_plt'], use_container_width=True)
             with col2:
                 if not tables['stat_summary_uneg'].empty:
                     st.markdown("##### Uneg by %Pdm")
                     st.dataframe(tables['stat_summary_uneg'], use_container_width=True)
+            
+            if not tables['stat_summary_plt'].empty:
+                st.markdown("##### Plt Statistics (24h - Overall)")
+                st.dataframe(tables['stat_summary_plt'], use_container_width=True)
+            
+            if not tables['stat_summary_plt_6to18'].empty:
+                st.markdown("##### Plt Statistics (6:00-18:00 - Overall)")
+                st.dataframe(tables['stat_summary_plt_6to18'], use_container_width=True)
             
             if not tables['stat_summary_vh'].empty:
                 st.markdown("##### Voltage Harmonics by %Pdm")
@@ -1060,33 +1263,43 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                 st.markdown("##### Current Harmonics by %Pdm")
                 st.dataframe(tables['stat_summary_ch'], use_container_width=True, height=400)
         
-        with tab4:
-            st.markdown(f"**Total rows:** {len(data)} | **Total columns:** {len(data.columns)}")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                show_rows = st.number_input("Rows to display:", min_value=10, max_value=len(data), value=min(100, len(data)), step=10)
-            with col2:
-                start_row = st.number_input("Start from row:", min_value=0, max_value=max(0, len(data)-1), value=0, step=10)
-            with col3:
-                search_col = st.text_input("Filter columns:", value="")
-            
-            if search_col.strip():
-                search_terms = [term.strip() for term in search_col.split(",")]
-                filtered_cols = [col for col in data.columns if any(term.lower() in col.lower() for term in search_terms)]
-                if filtered_cols:
-                    display_data = data[filtered_cols].iloc[start_row:start_row + show_rows]
-                    st.success(f"✓ Found {len(filtered_cols)} matching columns")
-                else:
-                    display_data = data.iloc[start_row:start_row + show_rows]
-                    st.warning("No matching columns found")
+    with tab4:
+        # Thêm radio button để chọn
+        view_mode = st.radio("View mode:", ["Processed Data", "Raw Data (Original)"], horizontal=True)
+        
+        if view_mode == "Raw Data (Original)":
+            display_data_source = result.get('data_raw', data)
+            st.info("📋 Showing original data before any processing")
+        else:
+            display_data_source = data
+            st.info("📋 Showing processed data (filtered by valid days and Ptot > 0)")
+        
+        st.markdown(f"**Total rows:** {len(display_data_source)} | **Total columns:** {len(display_data_source.columns)}")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            show_rows = st.number_input("Rows to display:", min_value=10, max_value=len(display_data_source), value=min(100, len(display_data_source)), step=10)
+        with col2:
+            start_row = st.number_input("Start from row:", min_value=0, max_value=max(0, len(display_data_source)-1), value=0, step=10)
+        with col3:
+            search_col = st.text_input("Filter columns:", value="")
+        
+        if search_col.strip():
+            search_terms = [term.strip() for term in search_col.split(",")]
+            filtered_cols = [col for col in display_data_source.columns if any(term.lower() in col.lower() for term in search_terms)]
+            if filtered_cols:
+                display_data = display_data_source[filtered_cols].iloc[start_row:start_row + show_rows]
+                st.success(f"✓ Found {len(filtered_cols)} matching columns")
             else:
-                display_data = data.iloc[start_row:start_row + show_rows]
-            
-            st.dataframe(display_data, use_container_width=True, height=400)
-            
-            if st.checkbox("Show statistics"):
-                st.dataframe(data.describe(), use_container_width=True)
+                display_data = display_data_source.iloc[start_row:start_row + show_rows]
+                st.warning("No matching columns found")
+        else:
+            display_data = display_data_source.iloc[start_row:start_row + show_rows]
+        
+        st.dataframe(display_data, use_container_width=True, height=400)
+        
+        if st.checkbox("Show statistics"):
+            st.dataframe(display_data_source.describe(), use_container_width=True)
         
         with tab5:
             available_columns = list(data.columns)
@@ -1134,14 +1347,6 @@ if st.session_state.processing_complete and st.session_state.processed_data:
 
 elif not st.session_state.processing_complete:
     # Welcome screen
-    # st.markdown("""
-    # <div style="text-align: center; padding: 3rem;">
-    #     <h2> Welcome to Power Quality Analysis System</h2>
-    #     <p style="font-size: 1.2rem; color: #7f8c8d; margin-top: 1rem;">
-    #         Upload your Excel files or specify a folder path in the sidebar to begin analysis
-    #     </p>
-    # </div>
-    # """, unsafe_allow_html=True)
     st.markdown("""
     <style>
     @keyframes typing {
