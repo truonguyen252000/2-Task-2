@@ -1426,3 +1426,5 @@ elif not st.session_state.processing_complete:
             <div style="color: #7f8c8d; margin-top: 0.5rem;">Download Excel, PDF, and PNG reports</div>
         </div>
         """, unsafe_allow_html=True)
+        #20251022
+        
