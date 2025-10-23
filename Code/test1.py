@@ -1261,7 +1261,7 @@ if st.session_state.processing_complete and st.session_state.processed_data:
         tables = result['tables']
         
         # Download section with cards
-        st.markdown('<div class="download-section">', unsafe_allow_html=True)
+        # st.markdown('<div class="download-section">', unsafe_allow_html=True)
         st.markdown(f"#### 📥 Download Results for: **{selected_file}**")
         
         import base64
