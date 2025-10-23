@@ -1,5 +1,4 @@
 import streamlit as st
-
 st.set_page_config(page_title="Power Quality Analysis", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -840,14 +839,58 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             daily_summary_text = ""
             
             # TÍNH TOÁN PLT (ưu tiên, chỉ cần Ptot >= 50% Pdm)
+# TÍNH TOÁN PLT (ưu tiên, chỉ cần Ptot >= 50% Pdm)
+            plt_valid_days_count = 0
+            plt_total_samples = 0
+            plt_divided_by_12 = 0
+                        
             if data_for_plt is not None and all(c in data_for_plt.columns for c in cols_plt):
                 total_samples_from_valid_days = len(data_for_plt)
-                table_plt_24h = make_table(data_for_plt, cols_plt)
+                plt_total_samples = total_samples_from_valid_days
+                plt_divided_by_12 = total_samples_from_valid_days / 12
+                
+                # Đếm số ngày đủ điều kiện cho Plt
+                if "Date" in data_temp.columns:
+                    plt_valid_days_count = len(valid_dates)
+                
+                # ✅ TÍNH TOÁN BẢNG PLT 24H - Dựa trên tổng mẫu chia 12
+                total_plt_values = total_samples_from_valid_days / 12
+                
+                passed = {}
+                failed = {}
+                perc = {}
+                status_per_col = {}
+                
+                for col in cols_plt:
+                    threshold = thresholds[col]
+                    pass_count = ((data_for_plt[col] <= threshold) & data_for_plt[col].notna()).sum() / 12
+                    fail_count = total_plt_values - pass_count
+                    percentage = (pass_count / total_plt_values * 100) if total_plt_values > 0 else 0
+                    
+                    passed[col] = pass_count
+                    failed[col] = fail_count
+                    perc[col] = round(percentage, 2)
+                    status_per_col[col] = "PASS" if percentage >= 95 else "FAIL"
+                
+                group_status = "PASS" if all(s == "PASS" for s in status_per_col.values()) else "FAIL"
+                
+                table_plt_24h = pd.DataFrame([
+                    {col: total_plt_values for col in cols_plt},
+                    passed,
+                    failed,
+                    perc,
+                    status_per_col
+                ], index=[
+                    "No. of samples",
+                    "No. of pass samples",
+                    "No. of fail samples",
+                    "Percentage of pass samples [%]",
+                    "Status"
+                ])
+                table_plt_24h.loc["Group Status"] = [group_status] * len(cols_plt)
+                
                 plt_sample_count = total_samples_from_valid_days / 12
                 
-                for row_name in ["No. of samples", "No. of pass samples", "No. of fail samples"]:
-                    if row_name in table_plt_24h.index:
-                        table_plt_24h.loc[row_name] = table_plt_24h.loc[row_name] / 12
                 
                 # Plt Statistics (Overall) cho toàn bộ ngày
                 plt_stats = []
@@ -868,12 +911,43 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                 stat_summary_plt = stat_summary_plt.round(3)
             
             if data_for_plt_6to18 is not None and len(data_for_plt_6to18) > 0 and all(c in data_for_plt_6to18.columns for c in cols_plt):
-                # Plt cho 6:00-18:00
-                table_plt_6to18 = make_table(data_for_plt_6to18, cols_plt)
-                # Chia cho 12 cho các dòng số lượng mẫu
-                for row_name in ["No. of samples", "No. of pass samples", "No. of fail samples"]:
-                    if row_name in table_plt_6to18.index:
-                        table_plt_6to18.loc[row_name] = table_plt_6to18.loc[row_name] / 12
+                # ✅ TÍNH TOÁN BẢNG PLT 6-18H - Dựa trên tổng mẫu chia 12
+                total_samples_6to18 = len(data_for_plt_6to18)
+                total_plt_values_6to18 = total_samples_6to18 / 12
+                
+                passed_6to18 = {}
+                failed_6to18 = {}
+                perc_6to18 = {}
+                status_per_col_6to18 = {}
+                
+                for col in cols_plt:
+                    threshold = thresholds[col]
+                    pass_count = ((data_for_plt_6to18[col] <= threshold) & data_for_plt_6to18[col].notna()).sum() / 12
+                    fail_count = total_plt_values_6to18 - pass_count
+                    percentage = (pass_count / total_plt_values_6to18 * 100) if total_plt_values_6to18 > 0 else 0
+                    
+                    passed_6to18[col] = pass_count
+                    failed_6to18[col] = fail_count
+                    perc_6to18[col] = round(percentage, 2)
+                    status_per_col_6to18[col] = "PASS" if percentage >= 95 else "FAIL"
+                
+                group_status_6to18 = "PASS" if all(s == "PASS" for s in status_per_col_6to18.values()) else "FAIL"
+                
+                table_plt_6to18 = pd.DataFrame([
+                    {col: total_plt_values_6to18 for col in cols_plt},
+                    passed_6to18,
+                    failed_6to18,
+                    perc_6to18,
+                    status_per_col_6to18
+                ], index=[
+                    "No. of samples",
+                    "No. of pass samples",
+                    "No. of fail samples",
+                    "Percentage of pass samples [%]",
+                    "Status"
+                ])
+                table_plt_6to18.loc["Group Status"] = [group_status_6to18] * len(cols_plt)
+
                 
                 # Plt Statistics (Overall) cho 6:00-18:00
                 plt_stats_6to18 = []
@@ -1076,7 +1150,12 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                 'excel_path': out_excel_path,
                 'png_path': out_png_path,
                 'pdf_path': out_pdf_path,
-                'save_folder': save_folder
+                'save_folder': save_folder,
+                'plt_info': {
+                    'valid_days_count': plt_valid_days_count,
+                    'total_samples': plt_total_samples,
+                    'divided_by_12': plt_divided_by_12
+                }
             }
 
             processed_count += 1
@@ -1131,12 +1210,49 @@ if st.session_state.processing_complete and st.session_state.processed_data:
         c3.markdown(get_download_link(result['pdf_path'], f"Output_{selected_file}.pdf", "PDF Report", "📄"), unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Summary statistics
+# Summary statistics
         if tables['daily_summary_text']:
             st.markdown("---")
             st.info(tables['daily_summary_text'])
-
-
+            
+            # ✅ HIỂN THỊ THÔNG TIN PLT
+            if 'plt_info' in result and result['plt_info']['total_samples'] > 0:
+                plt_info = result['plt_info']
+                remainder = plt_info['total_samples'] % 12
+                
+                st.markdown("### 📊 Plt Calculation Summary")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.markdown(f"""
+                    <div class="stat-card">
+                        <div class="stat-number">{plt_info['valid_days_count']}</div>
+                        <div class="stat-label">Valid Days for Plt<br/>(≥1 sample with Ptot≥50%Pdm)</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                    <div class="stat-card">
+                        <div class="stat-number">{plt_info['total_samples']:,}</div>
+                        <div class="stat-label">Total Samples from Valid Days</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col3:
+                    if remainder == 0:
+                        color = "#27ae60"
+                        status = "✅ Perfect"
+                    else:
+                        color = "#e74c3c"
+                        status = f"⚠️ Remainder: {remainder}"
+                    
+                    st.markdown(f"""
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: {color};">{plt_info['divided_by_12']:.2f}</div>
+                        <div class="stat-label">Plt Values (÷12)<br/>{status}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
         if 'pdm_detailed_info' in tables and tables['pdm_detailed_info']:
             st.markdown("---")            
