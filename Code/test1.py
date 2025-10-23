@@ -238,8 +238,66 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore")
 
+def clean_data(data, time_col_name="Time [UTC]"):
+    """Làm sạch dữ liệu: cắt ngày đầu/cuối, thêm mốc thời gian thiếu, điền giá trị"""
+    if time_col_name not in data.columns:
+        return data, "No time column found"
+    
+    df = data.copy()
+    df[time_col_name] = pd.to_datetime(df[time_col_name], errors="coerce")
+    df = df.dropna(subset=[time_col_name]).sort_values(time_col_name).reset_index(drop=True)
+    
+    if df.empty:
+        return df, "Empty after cleaning"
+    
+    start, end = df[time_col_name].iloc[0], df[time_col_name].iloc[-1]
+    start_is_midnight = start.time() == pd.Timestamp("00:00").time()
+    end_is_2350 = end.time().hour == 23 and end.time().minute == 50
+    
+    log_msg = []
+    
+    if start_is_midnight and end_is_2350:
+        df_cut = df.copy()
+        log_msg.append("✅ Data already starts at 00:00 and ends at 23:50")
+    else:
+        start_date = (start + pd.Timedelta(days=1)).normalize()
+        end_date = (end.normalize() - pd.Timedelta(minutes=10))
+        df_cut = df[(df[time_col_name] >= start_date) & (df[time_col_name] <= end_date)]
+        if df_cut.empty:
+            return df_cut, "Empty after cutting"
+        log_msg.append(f"📅 Cut data: {start_date.date()} to {end_date.date()}, {len(df_cut)} rows")
+    
+    df_cut = df_cut.sort_values(time_col_name).reset_index(drop=True)
+    all_times = pd.date_range(start=df_cut[time_col_name].iloc[0],
+                              end=df_cut[time_col_name].iloc[-1],
+                              freq="10min")
+    missing_times = all_times.difference(df_cut[time_col_name])
+    
+    if len(missing_times) > 0:
+        log_msg.append(f"⚠️ Missing {len(missing_times)} timestamps → added and filled")
+        missing_df = pd.DataFrame({time_col_name: missing_times})
+        df_full = pd.concat([df_cut, missing_df], ignore_index=True)
+        df_full = df_full.sort_values(time_col_name).reset_index(drop=True)
+        df_full = df_full.ffill().bfill()
+    else:
+        log_msg.append("✅ No missing timestamps")
+        df_full = df_cut.copy()
+    
+    df_full["date"] = df_full[time_col_name].dt.date
+    samples_per_day = df_full.groupby("date").size()
+    days_incomplete = samples_per_day[samples_per_day < 144]
+    if len(days_incomplete) > 0:
+        log_msg.append(f"⚠️ {len(days_incomplete)} days with <144 samples")
+    else:
+        log_msg.append("✅ All days have 144 samples")
+    
+    df_full = df_full.drop(columns=["date"])
+    
+    return df_full, "\n".join(log_msg)
 DEFAULT_OUTPUT_FOLDER = os.path.join(os.path.expanduser("~"), "PowerQuality_Output")
+
 os.makedirs(DEFAULT_OUTPUT_FOLDER, exist_ok=True)
 cols_pst = ["Pst1(Avg) []", "Pst2(Avg) []", "Pst3(Avg) []"]
 cols_thdu = ["THD U1(AvgOn) [%]", "THD U2(AvgOn) [%]", "THD U3(AvgOn) [%]"]
@@ -677,8 +735,13 @@ with st.sidebar:
     
     
     st.markdown("---")
+    st.markdown("#### Processing Options")
+    enable_cleaning = st.checkbox("🧹 Clean data before analysis", value=False, 
+                                   help="Cut first/last incomplete days, fill missing timestamps")
+    st.markdown("---")
     st.markdown("#### Rated Power")
     PDM_default = 40000000
+
     Pdm_max = st.number_input("Pdm (W)", value=PDM_default, step=1000000, format="%d")
     
     st.markdown("---")
@@ -739,6 +802,7 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
 
     for idx, (ftype, name, fobj) in enumerate(files_to_process, start=1):
         status_text.info(f"🔄 Processing ({idx}/{len(files_to_process)}): **{name}**")
+        cleaning_log = ""
         try:
             if ftype == "uploaded":
                 xls = pd.ExcelFile(fobj)
@@ -763,7 +827,20 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     continue
             
             data = pd.read_excel(xls, sheet_name=sheet_to_read)
-            data_raw = data.copy()  
+            
+            # ✅ CLEANING DATA IF ENABLED
+            if enable_cleaning:
+                time_col_candidates = ["Time [UTC]", "Time", "Datetime"]
+                time_col_found = next((c for c in time_col_candidates if c in data.columns), None)
+                if time_col_found:
+                    status_text.info(f"🧹 Cleaning data for: **{name}**")
+                    data, cleaning_log = clean_data(data, time_col_found)
+                    if data.empty:
+                        status_text.warning(f"⚠️ {name}: {cleaning_log} — skipping")
+                        progress_bar.progress(int(idx/len(files_to_process)*100))
+                        continue
+            
+            data_raw = data.copy()
 
             if "Time [UTC]" in data.columns:
                 time_col = data["Time [UTC]"].copy()
@@ -1155,9 +1232,9 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     'valid_days_count': plt_valid_days_count,
                     'total_samples': plt_total_samples,
                     'divided_by_12': plt_divided_by_12
-                }
+                },
+                'cleaning_log': cleaning_log
             }
-
             processed_count += 1
         except Exception as e:
             st.error(f"❌ Error processing {name}: {e}")
@@ -1213,8 +1290,11 @@ if st.session_state.processing_complete and st.session_state.processed_data:
 # Summary statistics
         if tables['daily_summary_text']:
             st.markdown("---")
+            if result.get('cleaning_log'):
+                with st.expander("🧹 Data Cleaning Log", expanded=False):
+                    st.text(result['cleaning_log'])
             st.info(tables['daily_summary_text'])
-            
+
             # ✅ HIỂN THỊ THÔNG TIN PLT
             if 'plt_info' in result and result['plt_info']['total_samples'] > 0:
                 plt_info = result['plt_info']
