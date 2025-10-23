@@ -827,8 +827,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     continue
             
             data = pd.read_excel(xls, sheet_name=sheet_to_read)
-            
-            # ✅ CLEANING DATA IF ENABLED
+
+            data_raw = data.copy()
             if enable_cleaning:
                 time_col_candidates = ["Time [UTC]", "Time", "Datetime"]
                 time_col_found = next((c for c in time_col_candidates if c in data.columns), None)
@@ -839,8 +839,6 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                         status_text.warning(f"⚠️ {name}: {cleaning_log} — skipping")
                         progress_bar.progress(int(idx/len(files_to_process)*100))
                         continue
-            
-            data_raw = data.copy()
 
             if "Time [UTC]" in data.columns:
                 time_col = data["Time [UTC]"].copy()
