@@ -753,7 +753,7 @@ with st.sidebar:
         st.session_state.processed_data = {}
 
 # MAIN CONTENT AREA
-st.markdown('<div class="main-title">⚡ QUALITY ANALYSIS SYSTEM ⚡</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">⚡ POWER QUALITY ANALYSIS SYSTEM ⚡</div>', unsafe_allow_html=True)
 
 # Processing section
 if st.session_state.run_processing and not st.session_state.processing_complete:
