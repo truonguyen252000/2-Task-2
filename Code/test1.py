@@ -1227,7 +1227,7 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                     st.markdown(f"""
                     <div class="stat-card">
                         <div class="stat-number">{plt_info['valid_days_count']}</div>
-                        <div class="stat-label">Valid Days for Plt<br/>(≥1 sample with Ptot≥50%Pdm)</div>
+                        <div class="stat-label">Valid Days for Plt<br/>(Ptot≥50%Pdm)</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
@@ -1235,22 +1235,22 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                     st.markdown(f"""
                     <div class="stat-card">
                         <div class="stat-number">{plt_info['total_samples']:,}</div>
-                        <div class="stat-label">Total Samples from Valid Days</div>
+                        <div class="stat-label">Total Samples (Ptot≥50%Pdm)</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
                 with col3:
                     if remainder == 0:
                         color = "#27ae60"
-                        status = "✅ Perfect"
+                        status = "✅"
                     else:
                         color = "#e74c3c"
-                        status = f"⚠️ Remainder: {remainder}"
+                        status = f"⚠️: {remainder}"
                     
                     st.markdown(f"""
                     <div class="stat-card">
                         <div class="stat-number" style="color: {color};">{plt_info['divided_by_12']:.2f}</div>
-                        <div class="stat-label">Plt Values (÷12)<br/>{status}</div>
+                        <div class="stat-label">Plt Samples <br/>{status}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
