@@ -313,6 +313,16 @@ thresholds = {
     "u0(Avg) [%]": 3,
 }
 
+def update_thresholds(pst_val, plt_val, thdu_val, tddi_val, u0_val):
+    global thresholds
+    thresholds = {
+        "Pst1(Avg) []": pst_val, "Pst2(Avg) []": pst_val, "Pst3(Avg) []": pst_val,
+        "THD U1(AvgOn) [%]": thdu_val, "THD U2(AvgOn) [%]": thdu_val, "THD U3(AvgOn) [%]": thdu_val,
+        "TDD I1(AvgOn) [%]": tddi_val, "TDD I2(AvgOn) [%]": tddi_val, "TDD I3(AvgOn) [%]": tddi_val,
+        "Plt1(Avg) []": plt_val, "Plt2(Avg) []": plt_val, "Plt3(Avg) []": plt_val,
+        "u0(Avg) [%]": u0_val,
+    }
+
 try:
     pdfmetrics.registerFont(TTFont('Times-Roman', 'times.ttf'))
 except Exception:
@@ -707,10 +717,21 @@ if "processing_complete" not in st.session_state:
     st.session_state.processing_complete = False
 
 # SIDEBAR
+# with st.sidebar:
+#     st.markdown("### Configuration")
+#     st.markdown("---")
 with st.sidebar:
+    # Logo - optimized for sidebar
+    col1, col2, col3 = st.columns([0.5, 3, 0.5])
+    with col2:
+        try:
+            st.image("logo.png", use_container_width=True)
+        except FileNotFoundError:
+            st.markdown("### SAVINA")
+    st.markdown("---")
     st.markdown("### Configuration")
     st.markdown("---")
-    
+
     st.markdown("#### Data Source")
     uploaded_files = st.file_uploader(
         "Upload Excel files (.xlsx)",
@@ -727,7 +748,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("#### Output Settings")
-    use_local_save = st.checkbox("Save to local folder", value=False)
+    use_local_save = st.checkbox("Save to local folder", value=False,)
     if use_local_save:
         out_folder_input = st.text_input("Output folder:", value=DEFAULT_OUTPUT_FOLDER)
     else:
@@ -736,8 +757,34 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("#### Processing Options")
-    enable_cleaning = st.checkbox("🧹 Clean data before analysis", value=False, 
+    enable_cleaning = st.checkbox("🧹 Clean data before analysis", value=True, 
                                    help="Cut first/last incomplete days, fill missing timestamps")
+    
+    st.markdown("---")
+    st.markdown("#### Voltage Level & Thresholds")
+    voltage_level = st.selectbox(
+        "Select voltage level:",
+        ["110kV", "22kV"],
+        help="Different voltage levels have different threshold requirements"
+    )
+    
+    if voltage_level == "110kV":
+        threshold_pst = st.number_input("Pst threshold:", value=0.8, step=0.1, format="%.1f")
+        threshold_plt = st.number_input("Plt threshold:", value=0.6, step=0.1, format="%.1f")
+        threshold_thdu = st.number_input("THD U threshold (%):", value=3.0, step=0.5, format="%.1f")
+        threshold_tddi = st.number_input("TDD I threshold (%):", value=3.0, step=0.5, format="%.1f")
+        threshold_u0 = st.number_input("u0 threshold (%):", value=3.0, step=0.5, format="%.1f")
+        threshold_vh = st.number_input("Voltage harmonic threshold (%):", value=1.5, step=0.1, format="%.1f")
+        threshold_ch = st.number_input("Current harmonic threshold (%):", value=2.0, step=0.1, format="%.1f")
+    else:  # 22kV
+        threshold_pst = st.number_input("Pst threshold:", value=1.0, step=0.1, format="%.1f")
+        threshold_plt = st.number_input("Plt threshold:", value=0.8, step=0.1, format="%.1f")
+        threshold_thdu = st.number_input("THD U threshold (%):", value=5.0, step=0.5, format="%.1f")
+        threshold_tddi = st.number_input("TDD I threshold (%):", value=5.0, step=0.5, format="%.1f")
+        threshold_u0 = st.number_input("u0 threshold (%):", value=3.0, step=0.5, format="%.1f")
+        threshold_vh = st.number_input("Voltage harmonic threshold (%):", value=3.0, step=0.1, format="%.1f")
+        threshold_ch = st.number_input("Current harmonic threshold (%):", value=4.0, step=0.1, format="%.1f")
+    
     st.markdown("---")
     st.markdown("#### Rated Power")
     PDM_default = 40000000
@@ -773,7 +820,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
         st.error("❌ Please upload files or specify a folder path")
         st.stop()
 
-    # Stats cards (2 columns only)
+        update_thresholds(threshold_pst, threshold_plt, threshold_thdu, threshold_tddi, threshold_u0)
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -1114,8 +1162,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             table_thdu = make_table(data, cols_thdu) if all(c in data.columns for c in cols_thdu) else pd.DataFrame()
             table_tddi = make_table(data, cols_tddi) if all(c in data.columns for c in cols_tddi) else pd.DataFrame()
             table_uneg = make_table(data, cols_uneg) if all(c in data.columns for c in cols_uneg) else pd.DataFrame()
-            table_vh_order = make_voltage_harmonics_detail(data)
-            table_ch_order = make_current_harmonics_detail(data)
+            table_vh_order = make_voltage_harmonics_detail(data, threshold_vh)
+            table_ch_order = make_current_harmonics_detail(data, threshold_ch)
 
             if use_local_save and out_folder_input:
                 save_folder = out_folder_input
@@ -1201,8 +1249,18 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             st.session_state.processed_data[base_name] = {
                 'data': data.copy(),
                 'data_raw': data_raw,
-
+                'voltage_level': voltage_level,
+                'thresholds': {
+                    'pst': threshold_pst,
+                    'plt': threshold_plt,
+                    'thdu': threshold_thdu,
+                    'tddi': threshold_tddi,
+                    'u0': threshold_u0,
+                    'vh': threshold_vh,
+                    'ch': threshold_ch
+                },
                 'tables': {
+
                     'table_pst': table_pst,
                     'table_thdu': table_thdu,
                     'table_tddi': table_tddi,
@@ -1259,6 +1317,34 @@ if st.session_state.processing_complete and st.session_state.processed_data:
         result = st.session_state.processed_data[selected_file]
         data = result['data']
         tables = result['tables']
+        # Display voltage level and thresholds info
+        st.markdown("---")
+        st.markdown("### ⚙️ Analysis Configuration")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-number">{result.get('voltage_level', 'N/A')}</div>
+                <div class="stat-label">Voltage Level</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            thresholds_info = result.get('thresholds', {})
+            st.markdown(f"""
+            <div class="stat-card" style="text-align: left; padding: 1rem 1.5rem;">
+                <div style="font-weight: 600; margin-bottom: 0.5rem;">Applied Thresholds:</div>
+                <div style="font-size: 0.9rem; line-height: 1.8;">
+                    • Pst: {thresholds_info.get('pst', 'N/A')}<br/>
+                    • Plt: {thresholds_info.get('plt', 'N/A')}<br/>
+                    • THD U: {thresholds_info.get('thdu', 'N/A')}%<br/>
+                    • TDD I: {thresholds_info.get('tddi', 'N/A')}%<br/>
+                    • u0: {thresholds_info.get('u0', 'N/A')}%<br/>
+                    • Voltage Harmonic: {thresholds_info.get('vh', 'N/A')}%<br/>
+                    • Current Harmonic: {thresholds_info.get('ch', 'N/A')}%
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
         
         # Download section with cards
         # st.markdown('<div class="download-section">', unsafe_allow_html=True)
@@ -1592,6 +1678,7 @@ elif not st.session_state.processing_complete:
 
     col1, col2, col3 = st.columns(3)
 
+
     with col1:
         st.markdown("""
         <div class="stat-card" style="text-align: center;">
@@ -1601,6 +1688,7 @@ elif not st.session_state.processing_complete:
         </div>
         """, unsafe_allow_html=True)
 
+
     with col2:
         st.markdown("""
         <div class="stat-card" style="text-align: center;">
@@ -1609,6 +1697,7 @@ elif not st.session_state.processing_complete:
             <div style="color: #7f8c8d; margin-top: 0.5rem;">Detailed %Pdm distribution analysis</div>
         </div>
         """, unsafe_allow_html=True)
+
 
     with col3:
         st.markdown("""
