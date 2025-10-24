@@ -716,21 +716,24 @@ if "processed_data" not in st.session_state:
 if "processing_complete" not in st.session_state:
     st.session_state.processing_complete = False
 
-# SIDEBAR
-# with st.sidebar:
-#     st.markdown("### Configuration")
-#     st.markdown("---")
 with st.sidebar:
-    # Logo - optimized for sidebar
     col1, col2, col3 = st.columns([0.5, 3, 0.5])
     with col2:
-        try:
-            st.image("logo.png", use_container_width=True)
-        except FileNotFoundError:
-            st.markdown("### SAVINA")
-    st.markdown("---")
-    st.markdown("### Configuration")
-    st.markdown("---")
+        logo_paths = [
+            "logo.png",  
+            os.path.join(os.path.dirname(__file__), "logo.png"),  
+            os.path.join(os.getcwd(), "logo.png"), 
+        ]
+        
+        logo_loaded = False
+        for logo_path in logo_paths:
+            if os.path.exists(logo_path):
+                try:
+                    st.image(logo_path, use_container_width=True)
+                    logo_loaded = True
+                    break
+                except Exception:
+                    continue
 
     st.markdown("#### Data Source")
     uploaded_files = st.file_uploader(
