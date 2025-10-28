@@ -1394,7 +1394,7 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                     • Plt: {thresholds_info.get('plt', 'N/A')}<br/>
                     • THD U: {thresholds_info.get('thdu', 'N/A')}%<br/>
                     • TDD I: {thresholds_info.get('tddi', 'N/A')}%<br/>
-                    • u0: {thresholds_info.get('u0', 'N/A')}%<br/>
+                    • u_neg: {thresholds_info.get('u_neg', 'N/A')}%<br/>
                     • Voltage Harmonic: {thresholds_info.get('vh', 'N/A')}%<br/>
                     • Current Harmonic: {thresholds_info.get('ch', 'N/A')}%
                 </div>
