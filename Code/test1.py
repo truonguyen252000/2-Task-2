@@ -476,7 +476,91 @@ def make_current_harmonics_detail(data, threshold=2):
     ]
     df_detail_cr = pd.DataFrame(rows, columns=pd.MultiIndex.from_tuples(columns))
     return df_detail_cr
+def make_thd_max_table(data):
+    thd_cols = ["THD U1(AvgOn) [%]", "THD U2(AvgOn) [%]", "THD U3(AvgOn) [%]"]
+    has_time = "Time [UTC]" in data.columns
+    
+    rows = []
+    for i, thd_col in enumerate(thd_cols, 1):
+        phase = chr(64 + i)  # A, B, C
+        
+        if thd_col in data.columns:
+            max_thd = data[thd_col].max()
+            max_idx = data[thd_col].idxmax()
+            
+            # Get corresponding TOTAL power value
+            if "Ptot+(Avg) [W]" in data.columns:
+                corresponding_power = data.loc[max_idx, "Ptot+(Avg) [W]"] / 1e6  # Convert to MW
+            else:
+                corresponding_power = np.nan
+            
+            if has_time:
+                timestamp = data.loc[max_idx, "Time [UTC]"]
+                if pd.notna(timestamp):
+                    timestamp_str = pd.to_datetime(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    timestamp_str = "N/A"
+            else:
+                timestamp_str = "N/A"
+        else:
+            max_thd = np.nan
+            corresponding_power = np.nan
+            timestamp_str = "N/A"
+        
+        rows.append([
+            f"Maximum THD phase {phase} (% compared to rated voltage)",
+            round(max_thd, 3) if not np.isnan(max_thd) else "N/A",
+            f"Power plant output corresponding to maximum THD phase {phase} (MW)",
+            round(corresponding_power, 2) if not np.isnan(corresponding_power) else "N/A",
+            f"Timestamp of maximum THD phase {phase}",
+            timestamp_str
+        ])
+    
+    df_thd_max = pd.DataFrame(rows, columns=["Parameter", "Value", "Parameter 2", "Value 2", "Parameter 3", "Value 3"])
+    return df_thd_max
 
+def make_tdd_max_table(data):
+    tdd_cols = ["TDD I1(AvgOn) [%]", "TDD I2(AvgOn) [%]", "TDD I3(AvgOn) [%]"]
+    
+    has_time = "Time [UTC]" in data.columns
+    
+    rows = []
+    for i, tdd_col in enumerate(tdd_cols, 1):
+        phase = chr(64 + i)  # A, B, C
+        
+        if tdd_col in data.columns:
+            max_tdd = data[tdd_col].max()
+            max_idx = data[tdd_col].idxmax()
+            
+            if "Ptot+(Avg) [W]" in data.columns:
+                corresponding_power = data.loc[max_idx, "Ptot+(Avg) [W]"] / 1e6  # Convert to MW
+            else:
+                corresponding_power = np.nan
+            
+            if has_time:
+                timestamp = data.loc[max_idx, "Time [UTC]"]
+                if pd.notna(timestamp):
+                    timestamp_str = pd.to_datetime(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    timestamp_str = "N/A"
+            else:
+                timestamp_str = "N/A"
+        else:
+            max_tdd = np.nan
+            corresponding_power = np.nan
+            timestamp_str = "N/A"
+        
+        rows.append([
+            f"Maximum TDD phase {phase} (% compared to rated current)",
+            round(max_tdd, 3) if not np.isnan(max_tdd) else "N/A",
+            f"Power plant output corresponding to maximum TDD phase {phase} (MW)",
+            round(corresponding_power, 2) if not np.isnan(corresponding_power) else "N/A",
+            f"Timestamp of maximum TDD phase {phase}",
+            timestamp_str
+        ])
+    
+    df_tdd_max = pd.DataFrame(rows, columns=["Parameter", "Value", "Parameter 2", "Value 2", "Parameter 3", "Value 3"])
+    return df_tdd_max
 def make_voltage_harmonics_by_pdm(data, bins, labels):
     harmonic_orders = range(2, 41)
     phases = [("Phase A", "U1"), ("Phase B", "U2"), ("Phase C", "U3")]
@@ -1219,7 +1303,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             table_uneg = make_table(data, cols_uneg) if all(c in data.columns for c in cols_uneg) else pd.DataFrame()
             table_vh_order = make_voltage_harmonics_detail(data, threshold_vh)
             table_ch_order = make_current_harmonics_detail(data, threshold_ch)
-
+            table_thd_max = make_thd_max_table(data)
+            table_tdd_max = make_tdd_max_table(data)
             if use_local_save and out_folder_input:
                 save_folder = out_folder_input
                 os.makedirs(save_folder, exist_ok=True)
@@ -1252,7 +1337,10 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     save_table_to_excel(writer, table_uneg, "u0Avg")
                 table_vh_order.to_excel(writer, sheet_name="Voltage Harmonics by Order")
                 table_ch_order.to_excel(writer, sheet_name="Current Harmonics by Order")
-                
+                if not table_thd_max.empty:
+                    table_thd_max.to_excel(writer, sheet_name="THD_Max_Values", index=False)
+                if not table_tdd_max.empty:
+                    table_tdd_max.to_excel(writer, sheet_name="TDD_Max_Values", index=False)
                 if not daily_pdm_table.empty:
                     daily_pdm_table.to_excel(writer, sheet_name="Daily_Pdm_Distribution", index=False)
                 
@@ -1278,6 +1366,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                 "Pst": table_pst,
                 "THDu": table_thdu,
                 "TDDi": table_tddi,
+                "THD Maximum Values": table_thd_max, 
+                "TDD Maximum Values": table_tdd_max,
                 "Plt (24h)": table_plt_24h,
                 "Plt (6:00-18:00)": table_plt_6to18,
                 "u0Avg": table_uneg,
@@ -1324,6 +1414,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     'table_uneg': table_uneg,
                     'table_vh_order': table_vh_order,
                     'table_ch_order': table_ch_order,
+                    'table_thd_max': table_thd_max, 
+                    'table_tdd_max': table_tdd_max,
                     'stat_summary_pst': stat_summary_pst,
                     'stat_summary_plt': stat_summary_plt,
                     'stat_summary_plt_6to18': stat_summary_plt_6to18,
@@ -1554,6 +1646,16 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                 st.markdown("##### Uneg (u0Avg) Summary")
                 st.dataframe(tables['table_uneg'], use_container_width=True)
         
+            col1, col2 = st.columns(2)
+            with col1:
+                if not tables.get('table_thd_max', pd.DataFrame()).empty:
+                    st.markdown("##### THD Maximum Values")
+                    st.dataframe(tables['table_thd_max'], use_container_width=True, hide_index=True)
+            with col2:
+                if not tables.get('table_tdd_max', pd.DataFrame()).empty:
+                    st.markdown("##### TDD Maximum Values")
+                    st.dataframe(tables['table_tdd_max'], use_container_width=True, hide_index=True)
+
         with tab2:
             col1, col2 = st.columns(2)
             with col1:
