@@ -240,8 +240,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore")
 
+
 def clean_data(data, time_col_name="Time [UTC]"):
-    """Làm sạch dữ liệu: cắt ngày đầu/cuối, thêm mốc thời gian thiếu, điền giá trị"""
     if time_col_name not in data.columns:
         return data, "No time column found"
     
@@ -270,32 +270,85 @@ def clean_data(data, time_col_name="Time [UTC]"):
         log_msg.append(f"📅 Cut data: {start_date.date()} to {end_date.date()}, {len(df_cut)} rows")
     
     df_cut = df_cut.sort_values(time_col_name).reset_index(drop=True)
-    all_times = pd.date_range(start=df_cut[time_col_name].iloc[0],
-                              end=df_cut[time_col_name].iloc[-1],
-                              freq="10min")
-    missing_times = all_times.difference(df_cut[time_col_name])
     
-    if len(missing_times) > 0:
-        log_msg.append(f"⚠️ Missing {len(missing_times)} timestamps → added and filled")
-        missing_df = pd.DataFrame({time_col_name: missing_times})
-        df_full = pd.concat([df_cut, missing_df], ignore_index=True)
-        df_full = df_full.sort_values(time_col_name).reset_index(drop=True)
-        df_full = df_full.ffill().bfill()
+    df_cut["date"] = df_cut[time_col_name].dt.date
+    
+    all_dates = sorted(df_cut["date"].unique())
+    days_to_remove = []
+    days_report = []
+    
+    for date in all_dates:
+        expected_times = pd.date_range(
+            start=pd.Timestamp(date),
+            end=pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=50),
+            freq="10min"
+        )
+        
+        actual_times = set(df_cut[df_cut["date"] == date][time_col_name])
+        
+        missing_count = len(set(expected_times) - actual_times)
+        
+        days_report.append(f"{date}: {missing_count}/144 missing")
+        
+        if missing_count > 15:
+            days_to_remove.append(date)
+    
+    log_msg.append("\n📊 Daily Missing Report:")
+    for report in days_report:
+        log_msg.append(f"   {report}")
+    
+    if days_to_remove:
+        df_cut = df_cut[~df_cut["date"].isin(days_to_remove)].copy()
+        log_msg.append(f"\n🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")
+        
+        if df_cut.empty:
+            return df_cut, "\n".join(log_msg) + "\n⚠️ No data remaining after filtering"
     else:
-        log_msg.append("✅ No missing timestamps")
+        log_msg.append("\n✅ All days have ≤15 missing timestamps")
+    
+    # Tính số ngày còn lại
+    remaining_dates = sorted(df_cut["date"].unique())
+    log_msg.append(f"\n📈 {len(remaining_dates)} valid days remaining")
+    
+    df_cut = df_cut.drop(columns=["date"]).reset_index(drop=True)
+    
+    if len(remaining_dates) > 0:
+        all_times = []
+        for date in remaining_dates:
+            day_times = pd.date_range(
+                start=pd.Timestamp(date),
+                end=pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=50),
+                freq="10min"
+            )
+            all_times.extend(day_times)
+        
+        all_times = pd.DatetimeIndex(all_times)
+        missing_times = all_times.difference(df_cut[time_col_name])
+        
+        if len(missing_times) > 0:
+            log_msg.append(f"⚠️ Filling {len(missing_times)} missing timestamps in valid days")
+            missing_df = pd.DataFrame({time_col_name: missing_times})
+            df_full = pd.concat([df_cut, missing_df], ignore_index=True)
+            df_full = df_full.sort_values(time_col_name).reset_index(drop=True)
+            df_full = df_full.ffill().bfill()
+        else:
+            log_msg.append("✅ No missing timestamps in valid days")
+            df_full = df_cut.copy()
+        
+        df_full["date"] = df_full[time_col_name].dt.date
+        samples_per_day = df_full.groupby("date").size()
+        days_incomplete = samples_per_day[samples_per_day < 144]
+        if len(days_incomplete) > 0:
+            log_msg.append(f"⚠️ {len(days_incomplete)} days still have <144 samples")
+        else:
+            log_msg.append(f"✅ All {len(samples_per_day)} days have exactly 144 samples")
+        
+        df_full = df_full.drop(columns=["date"])
+    else:
         df_full = df_cut.copy()
     
-    df_full["date"] = df_full[time_col_name].dt.date
-    samples_per_day = df_full.groupby("date").size()
-    days_incomplete = samples_per_day[samples_per_day < 144]
-    if len(days_incomplete) > 0:
-        log_msg.append(f"⚠️ {len(days_incomplete)} days with <144 samples")
-    else:
-        log_msg.append("✅ All days have 144 samples")
-    
-    df_full = df_full.drop(columns=["date"])
-    
     return df_full, "\n".join(log_msg)
+
 DEFAULT_OUTPUT_FOLDER = os.path.join(os.path.expanduser("~"), "PowerQuality_Output")
 
 os.makedirs(DEFAULT_OUTPUT_FOLDER, exist_ok=True)
@@ -303,24 +356,24 @@ cols_pst = ["Pst1(Avg) []", "Pst2(Avg) []", "Pst3(Avg) []"]
 cols_thdu = ["THD U1(AvgOn) [%]", "THD U2(AvgOn) [%]", "THD U3(AvgOn) [%]"]
 cols_tddi = ["TDD I1(AvgOn) [%]", "TDD I2(AvgOn) [%]", "TDD I3(AvgOn) [%]"]
 cols_plt = ["Plt1(Avg) []", "Plt2(Avg) []", "Plt3(Avg) []"]
-cols_uneg = ["u0(Avg) [%]"]
+cols_uneg = ["u-(Avg) [%]"]
 
 thresholds = {
     "Pst1(Avg) []": 0.8, "Pst2(Avg) []": 0.8, "Pst3(Avg) []": 0.8,
     "THD U1(AvgOn) [%]": 3, "THD U2(AvgOn) [%]": 3, "THD U3(AvgOn) [%]": 3,
     "TDD I1(AvgOn) [%]": 3, "TDD I2(AvgOn) [%]": 3, "TDD I3(AvgOn) [%]": 3,
     "Plt1(Avg) []": 0.6, "Plt2(Avg) []": 0.6, "Plt3(Avg) []": 0.6,
-    "u0(Avg) [%]": 3,
+    "u-(Avg) [%]": 3,
 }
 
-def update_thresholds(pst_val, plt_val, thdu_val, tddi_val, u0_val):
+def update_thresholds(pst_val, plt_val, thdu_val, tddi_val, u_neg_val):
     global thresholds
     thresholds = {
         "Pst1(Avg) []": pst_val, "Pst2(Avg) []": pst_val, "Pst3(Avg) []": pst_val,
         "THD U1(AvgOn) [%]": thdu_val, "THD U2(AvgOn) [%]": thdu_val, "THD U3(AvgOn) [%]": thdu_val,
         "TDD I1(AvgOn) [%]": tddi_val, "TDD I2(AvgOn) [%]": tddi_val, "TDD I3(AvgOn) [%]": tddi_val,
         "Plt1(Avg) []": plt_val, "Plt2(Avg) []": plt_val, "Plt3(Avg) []": plt_val,
-        "u0(Avg) [%]": u0_val,
+        "u-(Avg) [%]": u_neg_val,
     }
 
 try:
@@ -776,7 +829,7 @@ with st.sidebar:
         threshold_plt = st.number_input("Plt threshold:", value=0.6, step=0.1, format="%.1f")
         threshold_thdu = st.number_input("THD U threshold (%):", value=3.0, step=0.5, format="%.1f")
         threshold_tddi = st.number_input("TDD I threshold (%):", value=3.0, step=0.5, format="%.1f")
-        threshold_u0 = st.number_input("u0 threshold (%):", value=3.0, step=0.5, format="%.1f")
+        threshold_u_neg = st.number_input("u- threshold (%):", value=3.0, step=0.5, format="%.1f")
         threshold_vh = st.number_input("Voltage harmonic threshold (%):", value=1.5, step=0.1, format="%.1f")
         threshold_ch = st.number_input("Current harmonic threshold (%):", value=2.0, step=0.1, format="%.1f")
     else:  # 22kV
@@ -784,7 +837,7 @@ with st.sidebar:
         threshold_plt = st.number_input("Plt threshold:", value=0.8, step=0.1, format="%.1f")
         threshold_thdu = st.number_input("THD U threshold (%):", value=5.0, step=0.5, format="%.1f")
         threshold_tddi = st.number_input("TDD I threshold (%):", value=5.0, step=0.5, format="%.1f")
-        threshold_u0 = st.number_input("u0 threshold (%):", value=3.0, step=0.5, format="%.1f")
+        threshold_u_neg = st.number_input("u- threshold (%):", value=3.0, step=0.5, format="%.1f")
         threshold_vh = st.number_input("Voltage harmonic threshold (%):", value=3.0, step=0.1, format="%.1f")
         threshold_ch = st.number_input("Current harmonic threshold (%):", value=4.0, step=0.1, format="%.1f")
     
@@ -823,7 +876,7 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
         st.error("❌ Please upload files or specify a folder path")
         st.stop()
 
-        update_thresholds(threshold_pst, threshold_plt, threshold_thdu, threshold_tddi, threshold_u0)
+        update_thresholds(threshold_pst, threshold_plt, threshold_thdu, threshold_tddi, threshold_u_neg)
 
     col1, col2 = st.columns(2)
 
@@ -964,7 +1017,6 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             daily_pdm_table = pd.DataFrame()
             daily_summary_text = ""
             
-            # TÍNH TOÁN PLT (ưu tiên, chỉ cần Ptot >= 50% Pdm)
 # TÍNH TOÁN PLT (ưu tiên, chỉ cần Ptot >= 50% Pdm)
             plt_valid_days_count = 0
             plt_total_samples = 0
@@ -1258,7 +1310,7 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     'plt': threshold_plt,
                     'thdu': threshold_thdu,
                     'tddi': threshold_tddi,
-                    'u0': threshold_u0,
+                    'u_neg': threshold_u_neg,
                     'vh': threshold_vh,
                     'ch': threshold_ch
                 },
