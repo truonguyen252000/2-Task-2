@@ -818,16 +818,18 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
             for config in result_configs:
                 try:
                     df_result = pd.read_excel(excel_path, sheet_name=config["sheet"])
-                    percentage_val = df_result.iloc[config["percentage_row"], 1]
-                    status_val = str(df_result.iloc[config["status_row"], 1]).strip().upper()
+
+                    row_data = df_result.iloc[config["percentage_row"], 1:4]  
+                    percentage_val = row_data.min()  
+                    
+                    status_val = "PASS" if percentage_val >= 95 else "FAIL"
                     
                     found = False
-                    for row_idx, row in enumerate(result_table.rows[1:], start=1):  # Bỏ qua header
+                    for row_idx, row in enumerate(result_table.rows[1:], start=1):
                         if len(row.cells) < col_khongdat + 1:
                             continue
                         
                         first_col_text = row.cells[0].text.strip().lower()
-                        
                         if config["row_keyword"].lower() in first_col_text:
                             found = True
                             
@@ -841,12 +843,11 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
                                 set_cell_format(row.cells[col_dat], "")
                                 set_cell_format(row.cells[col_khongdat], "x")
                             
-                            logs.append(f"✅ Đã điền {config['name']}: {percentage_text} - {'Đạt' if status_val == 'PASS' else 'Không đạt'}")
+                            logs.append(f"✅ Đã điền {config['name']}: {percentage_text} (MIN) - {'Đạt' if status_val == 'PASS' else 'Không đạt'}")
                             break
                     
                     if not found:
-                        logs.append(f"⚠️ Không tìm thấy dòng '{config['row_keyword']}' cho {config['name']}")
-                        
+                        logs.append(f"⚠️ Không tìm thấy dòng '{config['row_keyword']}' cho {config['name']}")    
                 except Exception as e:
                     logs.append(f"⚠️ Lỗi khi xử lý {config['name']}: {str(e)}")
 
