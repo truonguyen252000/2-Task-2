@@ -1,6 +1,6 @@
+# A.Custom CSS cho Streamlit App
 import streamlit as st
 st.set_page_config(page_title="Power Quality Analysis", layout="wide", initial_sidebar_state="expanded")
-
 st.markdown("""
 <style>
 
@@ -220,8 +220,7 @@ body, p, label, span, div {
 }          
 </style>
 """, unsafe_allow_html=True)
-
-
+# B.Hàm xử lý dữ liệu
 import pandas as pd
 import numpy as np
 import os
@@ -245,15 +244,13 @@ import datetime
 warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore")
 
-
 def clean_data(data, time_col_name="Time [UTC]"):
     if time_col_name not in data.columns:
         return data, "No time column found"
     
     df = data.copy()
     df[time_col_name] = pd.to_datetime(df[time_col_name], errors="coerce")
-    df = df.dropna(subset=[time_col_name]).sort_values(time_col_name).reset_index(drop=True)
-    
+    df = df.dropna(subset=[time_col_name]).sort_values(time_col_name).reset_index(drop=True)   
     if df.empty:
         return df, "Empty after cleaning"
     
@@ -354,7 +351,6 @@ def clean_data(data, time_col_name="Time [UTC]"):
     
     return df_full, "\n".join(log_msg)
 
-# ===================== HÀM XỬ LÝ WORD REPORT =====================
 
 def parse_excel_date(val):
     if pd.isna(val) or not val:
@@ -374,16 +370,34 @@ def parse_excel_date(val):
                 continue
     return None
 
+
 def format_cell_value(value, is_date=False, is_integer=False):
+    """Định dạng giá trị ô theo kiểu dữ liệu (chuẩn EU/VN: dấu phẩy thập phân, dấu chấm hàng nghìn)"""
     if pd.isna(value):
         return ""
     if is_date and isinstance(value, datetime.datetime):
         return value.strftime("%d/%m/%Y")
     if is_integer:
-        return str(int(value))
+        return f"{int(value):,}".replace(",", ".")
     if isinstance(value, (int, float)):
-        return str(int(value)) if float(value).is_integer() else str(round(value, 2))
+        if float(value).is_integer():
+            return f"{int(value):,}".replace(",", ".")
+        else:
+            return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return str(value)
+
+def format_number_eu(value, decimals=2):
+    if pd.isna(value) or value == "":
+        return ""
+    try:
+        num = float(value)
+        if num == int(num):
+            return f"{int(num):,}".replace(",", ".")
+        else:
+            formatted = f"{num:,.{decimals}f}"
+            return formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+    except (ValueError, TypeError):
+        return str(value)
 
 def set_cell_format(cell, text, font_size=12, alignment=WD_ALIGN_PARAGRAPH.CENTER, color=None):
     cell.text = text
@@ -601,10 +615,17 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
                         if pd.isna(value):
                             continue
                         
-                        val_text = (str(int(value)) if isinstance(value, (int, float)) and float(value).is_integer() 
-                                   else f"{value:.2f}" if isinstance(value, (int, float)) 
-                                   else str(value))
-                        
+                        # val_text = (str(int(value)) if isinstance(value, (int, float)) and float(value).is_integer() 
+                        #            else f"{value:.2f}" if isinstance(value, (int, float)) 
+                        #            else str(value))
+                        if isinstance(value, (int, float)):
+                            if float(value).is_integer():
+                                val_text = f"{int(value):,}".replace(",", ".")
+                            else:
+                                val_text = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        else:
+                            val_text = str(value)
+                            
                         set_cell_format(row.cells[word_col], val_text, font_size=5)
                         filled_stats[pdm_value] += 1
                     except:
@@ -612,22 +633,21 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
 
     total = sum(filled_stats.values())
     return f"✅ {table_name}: Điền {total} giá trị"
-    
+# C. Hàm xuất báo cáo Word 
 def process_word_report(excel_path, word_template_path, output_word_path, thresholds_dict=None):
     try:
         doc = Document(word_template_path)
         logs = []
-        
         # PHẦN 0: Điền threshold placeholders
         if thresholds_dict:
             placeholder_map = {
-                '{thd_th}': str(thresholds_dict.get('thdu', '')),
-                '{tdd_th}': str(thresholds_dict.get('tddi', '')),
-                '{pst_th}': str(thresholds_dict.get('pst', '')),
-                '{plt_th}': str(thresholds_dict.get('plt', '')),
-                '{uneg_th}': str(thresholds_dict.get('u_neg', '')),
-                '{uh_th}': str(thresholds_dict.get('vh', '')),
-                '{ih_th}': str(thresholds_dict.get('ch', ''))
+                '{thd_th}': format_number_eu(thresholds_dict.get('thdu', ''), decimals=1),
+                '{tdd_th}': format_number_eu(thresholds_dict.get('tddi', ''), decimals=1),
+                '{pst_th}': format_number_eu(thresholds_dict.get('pst', ''), decimals=1),
+                '{plt_th}': format_number_eu(thresholds_dict.get('plt', ''), decimals=1),
+                '{uneg_th}': format_number_eu(thresholds_dict.get('u_neg', ''), decimals=1),
+                '{uh_th}': format_number_eu(thresholds_dict.get('vh', ''), decimals=1),
+                '{ih_th}': format_number_eu(thresholds_dict.get('ch', ''), decimals=1)
             }
             
             # Replace in paragraphs
@@ -650,7 +670,11 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
                                             run.text = run.text.replace(placeholder, value)
             
             logs.append(f"✅ Thresholds filled: THD={thresholds_dict.get('thdu')}%, TDD={thresholds_dict.get('tddi')}%, Pst={thresholds_dict.get('pst')}, Plt={thresholds_dict.get('plt')}, Uneg={thresholds_dict.get('u_neg')}%, VH={thresholds_dict.get('vh')}%, IH={thresholds_dict.get('ch')}%")
-        # PHẦN 0.5: Điền thông tin thống kê dự án
+# PHẦN 0.5: Điền thông tin thống kê dự án
+        measurement_start_str = "N/A"
+        measurement_end_str = "N/A"
+        measurement_ptot_max_str = "N/A"
+
         try:
             df_stats = pd.read_excel(excel_path, sheet_name="Daily_Pdm_Distribution")
             pdm_mw = thresholds_dict.get('pdm_mw', '') if thresholds_dict else ''
@@ -676,14 +700,22 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
             valid_samples = thresholds_dict.get('valid_samples', 0) if thresholds_dict else 0
             total_samples = thresholds_dict.get('total_samples', 0) if thresholds_dict else 0
             
+            measurement_start_str = thresholds_dict.get('start_str', 'N/A') if thresholds_dict else 'N/A'
+            measurement_end_str = thresholds_dict.get('end_str', 'N/A') if thresholds_dict else 'N/A'
+            
+            # Lấy Ptot max từ thresholds_dict
+            ptot_max_value = thresholds_dict.get('ptot_max', 0) if thresholds_dict else 0
+            measurement_ptot_max_str = f"{ptot_max_value:,.2f}".replace(",", "X_TEMP").replace(".", ",").replace("X_TEMP", ".")
+            
+            # === TẠO MAPPING ĐỂ REPLACE ===
             stats_placeholder_map = {
-                '{Pdm}': str(pdm_mw),
-                '{valid_samples}': f"{valid_samples:,}",
-                '{total_samples}': f"{total_samples:,}",
-                '{sample_above_50}': f"{samples_above_50:,}",
-                '{samples_above_50}': f"{samples_above_50:,}",  # Alternative spelling
+                '{Pdm}': format_number_eu(pdm_mw, decimals=0),
+                '{valid_samples}': f"{valid_samples:,}".replace(",", "."),
+                '{total_samples}': f"{total_samples:,}".replace(",", "."),
+                '{sample_above_50}': f"{samples_above_50:,}".replace(",", "."),
+                '{samples_above_50}': f"{samples_above_50:,}".replace(",", "."),
                 '{valid_days_count}': str(valid_days_count),
-                '{total_days}': str(total_days)
+                '{total_days}': str(int(total_samples / 144)) if total_samples > 0 else str(len(df_data))
             }
             
             # Replace in paragraphs
@@ -705,9 +737,67 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
                                         if placeholder in run.text:
                                             run.text = run.text.replace(placeholder, value)
             
-            logs.append(f"✅ Statistics filled: Pdm={pdm_mw}MW, Valid days={valid_days_count}/{total_days}, Samples≥50%={samples_above_50:,}/{total_samples:,}")
+            logs.append(f"✅ Statistics filled: Pdm={pdm_mw}MW, Valid days={valid_days_count}/{total_days}, Samples≥50%={samples_above_50:,}/{total_samples:,}".replace(",", "."))
+
         except Exception as e:
             logs.append(f"⚠️ Statistics placeholders: {str(e)}")
+            measurement_start_str = "N/A"
+            measurement_end_str = "N/A"
+            measurement_ptot_max_str = "N/A"
+
+        # PHẦN 0.75: Điền measurement period và Ptot max
+        try:
+            # Tạo mapping cho placeholders
+            period_placeholder_map = {
+                '{start_str}': measurement_start_str,
+                '{end_str}': measurement_end_str,
+                '{date_start}': measurement_start_str,
+                '{date_end}': measurement_end_str,
+                '{Ptotmax}': measurement_ptot_max_str,
+                '{ptot_max}': measurement_ptot_max_str
+            }
+            
+            # Replace in paragraphs - XỬ LÝ TOÀN BỘ PARAGRAPH TEXT
+            for paragraph in doc.paragraphs:
+                original_text = paragraph.text
+                modified_text = original_text
+                
+                for placeholder, value in period_placeholder_map.items():
+                    if placeholder in modified_text:
+                        modified_text = modified_text.replace(placeholder, value)
+                
+                if modified_text != original_text:
+                    for run in paragraph.runs:
+                        run.text = ''
+                    if len(paragraph.runs) > 0:
+                        paragraph.runs[0].text = modified_text
+                    else:
+                        paragraph.add_run(modified_text)
+            
+            # Replace in tables
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            original_text = paragraph.text
+                            modified_text = original_text
+                            
+                            for placeholder, value in period_placeholder_map.items():
+                                if placeholder in modified_text:
+                                    modified_text = modified_text.replace(placeholder, value)
+                            
+                            if modified_text != original_text:
+                                for run in paragraph.runs:
+                                    run.text = ''
+                                if len(paragraph.runs) > 0:
+                                    paragraph.runs[0].text = modified_text
+                                else:
+                                    paragraph.add_run(modified_text)
+            
+            logs.append(f"✅ Measurement period filled: {measurement_start_str} → {measurement_end_str}, Ptot max: {measurement_ptot_max_str} MW")
+
+        except Exception as e:
+            logs.append(f"⚠️ Measurement period placeholders: {str(e)}")
         # PHẦN 1: Daily Distribution
         try:
             df_daily = pd.read_excel(excel_path, sheet_name="Daily_Pdm_Distribution")
@@ -978,7 +1068,101 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
                 logs.append(f"✅ {name}: {filled} bậc")
             except Exception as e:
                 logs.append(f"⚠️ {name}: {str(e)}")
-
+# ===================== PHẦN 6.5: BẢNG GIÁ TRỊ MAX SÓNG HÀI =====================
+        def fill_harmonics_max_table(sheet_name, keyword, name):
+            try:
+                df_max = pd.read_excel(excel_path, sheet_name=sheet_name)
+                
+                target_table = None
+                harmonic_col_idx = None
+                
+                for tbl in doc.tables:
+                    for row_idx, row in enumerate(tbl.rows):
+                        for cell_idx, cell in enumerate(row.cells):
+                            cell_text = cell.text.strip().lower()
+                            if keyword.lower() in cell_text:
+                                target_table = tbl
+                                harmonic_col_idx = cell_idx
+                                break
+                        if target_table:
+                            break
+                    if target_table:
+                        break
+                
+                if not target_table:
+                    return f"⚠️ {name}: Không tìm thấy bảng '{keyword}'"
+                
+                header_row_idx = None
+                for row_idx in range(len(target_table.rows)):
+                    row_text = " ".join([c.text.strip().lower() for c in target_table.rows[row_idx].cells])
+                    if "pha a" in row_text and "pha b" in row_text:
+                        header_row_idx = row_idx
+                        break
+                
+                if header_row_idx is None:
+                    return f"⚠️ {name}: Không tìm thấy header row với 'Pha A', 'Pha B', 'Pha C'"
+                
+                header_row = target_table.rows[header_row_idx]
+                col_pha_a = None
+                col_pha_b = None
+                col_pha_c = None
+                
+                for col_idx, cell in enumerate(header_row.cells):
+                    cell_lower = cell.text.strip().lower()
+                    if "pha a" in cell_lower and col_pha_a is None:
+                        col_pha_a = col_idx
+                    elif "pha b" in cell_lower and col_pha_b is None:
+                        col_pha_b = col_idx
+                    elif "pha c" in cell_lower and col_pha_c is None:
+                        col_pha_c = col_idx
+                
+                if None in [col_pha_a, col_pha_b, col_pha_c]:
+                    return f"⚠️ {name}: Không tìm đủ 3 cột Pha A, B, C"
+ 
+                excel_data = {}
+                for i in range(len(df_max)):
+                    try:
+                        harmonic_order = int(df_max.iloc[i, 0])
+                        phase_a = df_max.iloc[i, 1]
+                        phase_b = df_max.iloc[i, 2]
+                        phase_c = df_max.iloc[i, 3]
+                        excel_data[harmonic_order] = (phase_a, phase_b, phase_c)
+                    except:
+                        continue
+                
+                if not excel_data:
+                    return f"⚠️ {name}: Không có dữ liệu hợp lệ trong Excel"
+                
+                filled_count = 0
+                for row_idx in range(header_row_idx + 1, len(target_table.rows)):
+                    row = target_table.rows[row_idx]
+                    
+                    bac_text = row.cells[harmonic_col_idx].text.strip()
+                    if not bac_text.isdigit():
+                        continue
+                    
+                    bac = int(bac_text)
+                    
+                    if bac in excel_data:
+                        phase_a, phase_b, phase_c = excel_data[bac]
+                        
+                        if col_pha_a < len(row.cells) and not pd.isna(phase_a):
+                            set_cell_format(row.cells[col_pha_a], format_cell_value(phase_a))
+                        if col_pha_b < len(row.cells) and not pd.isna(phase_b):
+                            set_cell_format(row.cells[col_pha_b], format_cell_value(phase_b))
+                        if col_pha_c < len(row.cells) and not pd.isna(phase_c):
+                            set_cell_format(row.cells[col_pha_c], format_cell_value(phase_c))
+                        
+                        filled_count += 1
+                
+                max_harmonic = max(excel_data.keys()) if excel_data else 0
+                return f"✅ {name} Max: Đã điền {filled_count} bậc (2-{max_harmonic})"
+                
+            except Exception as e:
+                return f"⚠️ {name} Max: Lỗi - {str(e)}"
+        
+        logs.append(fill_harmonics_max_table("Voltage_Harmonics_Max", "bậc sóng hài riêng lẻ điện áp", "Điện áp"))
+        logs.append(fill_harmonics_max_table("Current_Harmonics_Max", "bậc sóng hài riêng lẻ dòng điện", "Dòng điện"))
         # PHẦN 7: Harmonics by %Pdm
         logs.append(fill_harmonics_by_pdm_generic(doc, excel_path, "Voltage_Harmonics_by_%Pdm", "THD", "điện áp"))
         logs.append(fill_harmonics_by_pdm_generic(doc, excel_path, "Current_Harmonics_by_%Pdm", "TDD", "dòng điện"))
@@ -991,9 +1175,8 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
     except Exception as e:
         return False, f"❌ Lỗi xử lý Word: {str(e)}"
 
-
+# D.CÁC HÀM HỖ TRỢ XỬ LÝ BẢNG THỐNG KÊ VÀ SÓNG HÀI
 DEFAULT_OUTPUT_FOLDER = os.path.join(os.path.expanduser("~"), "PowerQuality_Output")
-
 os.makedirs(DEFAULT_OUTPUT_FOLDER, exist_ok=True)
 cols_pst = ["Pst1(Avg) []", "Pst2(Avg) []", "Pst3(Avg) []"]
 cols_thdu = ["THD U1(AvgOn) [%]", "THD U2(AvgOn) [%]", "THD U3(AvgOn) [%]"]
@@ -1320,14 +1503,15 @@ def make_current_harmonics_by_pdm(data, bins, labels):
     ])
     df_ch = pd.DataFrame(rows_ch, columns=columns_ch)
     return df_ch.round(3)
-
-def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None):
+def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None, data_after_clean=None):
     if "Time [UTC]" not in data.columns or "Ptot+(Avg) [W]" not in data.columns:
-        return pd.DataFrame(), "", {}
+        return pd.DataFrame(), "", {}, "N/A", "N/A"
     data_copy = data.copy()
+    data_copy = data.copy()
+    data_copy["Ptot+(Avg) [W]"] = pd.to_numeric(data_copy["Ptot+(Avg) [W]"], errors='coerce')
     data_copy["Date"] = pd.to_datetime(data_copy["Time [UTC]"], errors='coerce').dt.date
     data_copy = data_copy.dropna(subset=["Date"])
-    
+
     if len(data_copy) == 0:
         return pd.DataFrame(), "", {}
     total_samples_after_clean = len(data_copy)
@@ -1378,7 +1562,6 @@ def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None):
             row.append(f"✗ Invalid ({len(date_data)} samples)") 
         rows.append(row)
 
-    # Thêm dòng Total
     total_row = ["", "TOTAL"] + total_counts + [""]
     rows.append(total_row)
 
@@ -1391,23 +1574,51 @@ def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None):
         total_samples = len(data_copy)
     valid_samples = len(data_copy[data_copy["Ptot+(Avg) [W]"] > 0])
 
-    # Dùng valid_total_counts
     samples_above_50 = sum(valid_total_counts[4:])  
     total_valid_days_samples = sum(valid_dates_samples.values())
-    total_days = len(dates)
+    total_days = int(total_samples / 144) if total_samples > 0 else len(dates)
+
+
     valid_days_count = len(valid_dates)
     invalid_days_count = len(invalid_dates)
 
-    summary_text = f"""**Recorded Power Statistics:**
-    - Total measurement period: **{total_days} days**
-    - **Valid days (≥ 50% Pdm): {valid_days_count} days** ✅
-    - Invalid days (< 50% Pdm): {invalid_days_count} days ❌
-    - **Total samples from valid days: {total_valid_days_samples:,} samples**
-    - Total recorded samples: {valid_samples:,}/{total_samples:,} samples with power > 0 W (Ptot > 0 W)
-    - Total samples with P ≥ 50% Pdm (from valid days only): **{samples_above_50:,} samples** 
-    **Note:** Only data from valid days are used for further analysis."""
+    start_str = "N/A"
+    end_str = "N/A"
+    
+    if data_after_clean is not None and "Time [UTC]" in data_after_clean.columns:
+        time_series = pd.to_datetime(data_after_clean["Time [UTC]"], errors='coerce').dropna()
+        if len(time_series) > 0:
+            start_date_after_clean = time_series.min()
+            start_str = start_date_after_clean.strftime("%d/%m/%Y")
+            
+            times_2350 = time_series[(time_series.dt.hour == 23) & (time_series.dt.minute == 50)]
+            if len(times_2350) > 0:
+                end_date_after_clean = times_2350.max()
+                end_str = end_date_after_clean.strftime("%d/%m/%Y")
+            else:
+                end_date_after_clean = time_series.max()
+                end_str = end_date_after_clean.strftime("%d/%m/%Y")
+    
+    # Tính Ptot max từ DATA_COPY (SAU KHI LỌC 2 ĐIỀU KIỆN: valid days + Ptot > 0)
+    ptot_max = 0
+    if "Ptot+(Avg) [W]" in data_copy.columns and len(data_copy) > 0:
+        ptot_values = pd.to_numeric(data_copy["Ptot+(Avg) [W]"], errors='coerce')
+        ptot_values_filtered = ptot_values[ptot_values > 0]
+        ptot_max = ptot_values_filtered.max() / 1_000_000 if len(ptot_values_filtered) > 0 else 0
 
-# Thông tin chi tiết về các ngày đạt yêu cầu
+    ptot_max_str = f"{ptot_max:,.2f}".replace(",", "X_TEMP").replace(".", ",").replace("X_TEMP", ".")
+
+    summary_text = f"""**Recorded Power Statistics:**
+    - **Measurement period (after cutting first/last days):** {start_str} → {end_str},
+    - **Maximum recorded power (Ptot max):** {ptot_max_str} MW,
+    - Total measurement period: **{total_days} days**,
+    - **Valid days (≥ 50% Pdm): {valid_days_count} days** ,
+    - Invalid days (< 50% Pdm): {invalid_days_count} days ,
+    - **Total samples from valid days: {total_valid_days_samples:,} samples**,
+    - Total recorded samples: {valid_samples:,}/{total_samples:,} samples with power > 0 W (Ptot > 0 W),
+    - Total samples with P ≥ 50% Pdm (from valid days only): **{samples_above_50:,} samples**
+    """.replace(",", "X_TEMP").replace(".", ",").replace("X_TEMP", ".")
+
     detailed_info = {
         'total_days': total_days,
         'valid_days_count': valid_days_count,
@@ -1416,10 +1627,10 @@ def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None):
         'valid_dates_samples': valid_dates_samples,
         'samples_above_50': samples_above_50, 
         'valid_samples': valid_samples,         
-        'total_samples': total_samples         
+        'total_samples': total_samples,
+        'ptot_max': ptot_max
     } 
-    return df_distribution, summary_text, detailed_info
-
+    return df_distribution, summary_text, detailed_info, start_str, end_str
 def plot_and_save(data, file_name, out_folder):
     groups = {"Pst": cols_pst, "THDu (%)": cols_thdu, "TDDi (%)": cols_tddi, "Plt": cols_plt}
     fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
@@ -1593,24 +1804,75 @@ with st.sidebar:
         ["110kV", "22kV"],
         help="Different voltage levels have different threshold requirements"
     )
-    
+
+    st.markdown("---")
+    import re
+    def parse_eu_number(text):
+        try:
+            text = text.replace(".", "").replace(",", ".")
+            return float(text)
+        except:
+            return None
+
+    def format_eu_number(value, decimals=1):
+        if decimals == 0:
+            return f"{int(value):,}".replace(",", ".")
+        else:
+            return f"{value:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+ 
     if voltage_level == "110kV":
-        threshold_pst = st.number_input("Pst threshold:", value=0.8, step=0.1, format="%.1f")
-        threshold_plt = st.number_input("Plt threshold:", value=0.6, step=0.1, format="%.1f")
-        threshold_thdu = st.number_input("THD U threshold (%):", value=3.0, step=0.5, format="%.1f")
-        threshold_tddi = st.number_input("TDD I threshold (%):", value=3.0, step=0.5, format="%.1f")
-        threshold_u_neg = st.number_input("u- threshold (%):", value=3.0, step=0.5, format="%.1f")
-        threshold_vh = st.number_input("Voltage harmonic threshold (%):", value=1.5, step=0.1, format="%.1f")
-        threshold_ch = st.number_input("Current harmonic threshold (%):", value=2.0, step=0.1, format="%.1f")
+        # Pst
+        pst_input = st.text_input("Pst threshold:", value="0,8", help="Use comma for decimal (e.g., 0,8)")
+        threshold_pst = parse_eu_number(pst_input) if parse_eu_number(pst_input) else 0.8
+        
+        # Plt
+        plt_input = st.text_input("Plt threshold:", value="0,6")
+        threshold_plt = parse_eu_number(plt_input) if parse_eu_number(plt_input) else 0.6
+        
+        # THD U
+        thdu_input = st.text_input("THD U threshold (%):", value="3,0")
+        threshold_thdu = parse_eu_number(thdu_input) if parse_eu_number(thdu_input) else 3.0
+        
+        # TDD I
+        tddi_input = st.text_input("TDD I threshold (%):", value="3,0")
+        threshold_tddi = parse_eu_number(tddi_input) if parse_eu_number(tddi_input) else 3.0
+        
+        # u-
+        uneg_input = st.text_input("u- threshold (%):", value="3,0")
+        threshold_u_neg = parse_eu_number(uneg_input) if parse_eu_number(uneg_input) else 3.0
+        
+        # Voltage harmonic
+        vh_input = st.text_input("Voltage harmonic threshold (%):", value="1,5")
+        threshold_vh = parse_eu_number(vh_input) if parse_eu_number(vh_input) else 1.5
+        
+        # Current harmonic
+        ch_input = st.text_input("Current harmonic threshold (%):", value="2,0")
+        threshold_ch = parse_eu_number(ch_input) if parse_eu_number(ch_input) else 2.0
+
     else:  # 22kV
-        threshold_pst = st.number_input("Pst threshold:", value=1.0, step=0.1, format="%.1f")
-        threshold_plt = st.number_input("Plt threshold:", value=0.8, step=0.1, format="%.1f")
-        threshold_thdu = st.number_input("THD U threshold (%):", value=5.0, step=0.5, format="%.1f")
-        threshold_tddi = st.number_input("TDD I threshold (%):", value=5.0, step=0.5, format="%.1f")
-        threshold_u_neg = st.number_input("u- threshold (%):", value=3.0, step=0.5, format="%.1f")
-        threshold_vh = st.number_input("Voltage harmonic threshold (%):", value=3.0, step=0.1, format="%.1f")
-        threshold_ch = st.number_input("Current harmonic threshold (%):", value=4.0, step=0.1, format="%.1f")
-    
+        pst_input = st.text_input("Pst threshold:", value="1,0")
+        threshold_pst = parse_eu_number(pst_input) if parse_eu_number(pst_input) else 1.0
+        
+        plt_input = st.text_input("Plt threshold:", value="0,8")
+        threshold_plt = parse_eu_number(plt_input) if parse_eu_number(plt_input) else 0.8
+        
+        thdu_input = st.text_input("THD U threshold (%):", value="5,0")
+        threshold_thdu = parse_eu_number(thdu_input) if parse_eu_number(thdu_input) else 5.0
+        
+        tddi_input = st.text_input("TDD I threshold (%):", value="5,0")
+        threshold_tddi = parse_eu_number(tddi_input) if parse_eu_number(tddi_input) else 5.0
+        
+        uneg_input = st.text_input("u- threshold (%):", value="3,0")
+        threshold_u_neg = parse_eu_number(uneg_input) if parse_eu_number(uneg_input) else 3.0
+        
+        vh_input = st.text_input("Voltage harmonic threshold (%):", value="3,0")
+        threshold_vh = parse_eu_number(vh_input) if parse_eu_number(vh_input) else 3.0
+        
+        ch_input = st.text_input("Current harmonic threshold (%):", value="4,0")
+        threshold_ch = parse_eu_number(ch_input) if parse_eu_number(ch_input) else 4.0   
+
+
     st.markdown("---")
     st.markdown("#### Rated Power")
     PDM_default = 40000000
@@ -1709,6 +1971,9 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                         status_text.warning(f"⚠️ {name}: {cleaning_log} — skipping")
                         progress_bar.progress(int(idx/len(files_to_process)*100))
                         continue
+            
+            # LƯU DATA SAU KHI CLEAN (TRƯỚC KHI LỌC ĐIỀU KIỆN)
+            data_after_clean = data.copy()
 
             if "Time [UTC]" in data.columns:
                 time_col = data["Time [UTC]"].copy()
@@ -1725,6 +1990,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             if "Ptot+(Avg) [W]" in data.columns and time_col is not None:
                 # Thêm cột Date và Time để phân loại
                 data_temp = data.copy()
+                # Convert Ptot to numeric first
+                data_temp["Ptot+(Avg) [W]"] = pd.to_numeric(data_temp["Ptot+(Avg) [W]"], errors='coerce')
                 data_temp["Date"] = pd.to_datetime(time_col.loc[data_temp.index], errors='coerce').dt.date
                 data_temp["Time"] = pd.to_datetime(time_col.loc[data_temp.index], errors='coerce')
                 data_temp = data_temp.dropna(subset=["Date"])
@@ -1755,6 +2022,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                         
                         # BƯỚC 2: Lọc thêm Ptot > 0 cho các bảng còn lại
                         data = data_valid_days.copy()
+                        # Ensure Ptot is numeric
+                        data["Ptot+(Avg) [W]"] = pd.to_numeric(data["Ptot+(Avg) [W]"], errors='coerce')
                         invalid_mask = (data["Ptot+(Avg) [W]"].isna()) | (data["Ptot+(Avg) [W]"] <= 0)
                         if invalid_mask.any():
                             data = data[~invalid_mask]
@@ -1831,10 +2100,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     "Percentage of pass samples [%]",
                     "Status"
                 ])
-                table_plt_24h.loc["Group Status"] = [group_status] * len(cols_plt)
-                
-                plt_sample_count = total_samples_from_valid_days / 12
-                
+                table_plt_24h.loc["Group Status"] = [group_status] * len(cols_plt)              
+                plt_sample_count = total_samples_from_valid_days / 12               
                 
                 # Plt Statistics (Overall) cho toàn bộ ngày
                 plt_stats = []
@@ -1891,8 +2158,7 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     "Status"
                 ])
                 table_plt_6to18.loc["Group Status"] = [group_status_6to18] * len(cols_plt)
-
-                
+            
                 # Plt Statistics (Overall) cho 6:00-18:00
                 plt_stats_6to18 = []
                 for col in cols_plt:
@@ -1910,14 +2176,15 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                 stat_summary_plt_6to18.index = ["Overall (6:00-18:00)"]
                 stat_summary_plt_6to18.index.name = "Statistic"
                 stat_summary_plt_6to18 = stat_summary_plt_6to18.round(3)
-
             if "Ptot+(Avg) [W]" in data.columns:
                 Pdm_max_val = Pdm_max
                 if pd.isna(Pdm_max_val) or Pdm_max_val <= 0:
                     pass
 
                 else:
-                    daily_pdm_table, daily_summary_text, pdm_detailed_info = make_daily_pdm_distribution(data, Pdm_max_val, data_raw)                  
+# Ensure Ptot is numeric before calculations
+                    data["Ptot+(Avg) [W]"] = pd.to_numeric(data["Ptot+(Avg) [W]"], errors='coerce')   
+                    daily_pdm_table, daily_summary_text, pdm_detailed_info, measurement_start_str, measurement_end_str = make_daily_pdm_distribution(data, Pdm_max_val, data_raw, data_after_clean)
                     bins = []
                     labels = []
                     for i in range(1, 11):
@@ -2107,9 +2374,12 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     'u_neg': threshold_u_neg,
                     'vh': threshold_vh,
                     'ch': threshold_ch,
-                    'pdm_mw': Pdm_max / 1_000_000,  # Convert W to MW
+                    'pdm_mw': Pdm_max / 1_000_000,
                     'valid_samples': valid_samples_count, 
-                    'total_samples': total_samples_count  
+                    'total_samples': total_samples_count,
+                    'ptot_max': pdm_detailed_info.get('ptot_max', 0) if pdm_detailed_info else 0,
+                    'start_str': measurement_start_str,  # ← THÊM DÒNG NÀY
+                    'end_str': measurement_end_str       # ← THÊM DÒNG NÀY
                 },
                 'tables': {
 
@@ -2161,10 +2431,7 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
 # Display results section
 if st.session_state.processing_complete and st.session_state.processed_data:
     st.markdown("---")
-    
-    # File selector with better styling
     file_names = list(st.session_state.processed_data.keys())
-    
     col1, col2 = st.columns([3, 1])
     with col1:
         st.markdown("### 📊 Analysis Results")
@@ -2175,7 +2442,6 @@ if st.session_state.processing_complete and st.session_state.processed_data:
         result = st.session_state.processed_data[selected_file]
         data = result['data']
         tables = result['tables']
-        # Display voltage level and thresholds info
         st.markdown("---")
         st.markdown("### ⚙️ Analysis Configuration")
         col1, col2 = st.columns(2)
@@ -2313,7 +2579,6 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                             st.code(traceback.format_exc())
         else:
             st.info("👆 Please upload a Word template (.docx) to generate the report")
-
         st.markdown('</div>', unsafe_allow_html=True)
         
 # Summary statistics
@@ -2339,15 +2604,15 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                         <div class="stat-label">Valid Days for Plt<br/>(Ptot≥50%Pdm)</div>
                     </div>
                     """, unsafe_allow_html=True)
-                
                 with col2:
+                    formatted_total_samples = f"{plt_info['total_samples']:,}".replace(",", ".")
                     st.markdown(f"""
                     <div class="stat-card">
-                        <div class="stat-number">{plt_info['total_samples']:,}</div>
+                        <div class="stat-number">{formatted_total_samples}</div>
                         <div class="stat-label">Total Samples (Ptot≥50%Pdm)</div>
                     </div>
-                    """, unsafe_allow_html=True)
-                
+                    """, unsafe_allow_html=True)         
+
                 with col3:
                     if remainder == 0:
                         color = "#27ae60"
@@ -2355,19 +2620,17 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                     else:
                         color = "#e74c3c"
                         status = f"⚠️: {remainder}"
-                    
+                    formatted_divided = f"{plt_info['divided_by_12']:.2f}".replace(".", ",")
                     st.markdown(f"""
                     <div class="stat-card">
-                        <div class="stat-number" style="color: {color};">{plt_info['divided_by_12']:.2f}</div>
+                        <div class="stat-number" style="color: {color};">{formatted_divided}</div>
                         <div class="stat-label">Plt Samples <br/>{status}</div>
                     </div>
                     """, unsafe_allow_html=True)
-
         if 'pdm_detailed_info' in tables and tables['pdm_detailed_info']:
             st.markdown("---")            
             info = tables['pdm_detailed_info']
             
-            # Statistics cards
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.markdown(f"""
@@ -2376,15 +2639,14 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                     <div class="stat-label">Valid Days</div>
                 </div>
                 """, unsafe_allow_html=True)
-            
             with col2:
+                formatted_valid_samples = f"{info['total_valid_days_samples']:,}".replace(",", ".")
                 st.markdown(f"""
                 <div class="stat-card">
-                    <div class="stat-number">{info['total_valid_days_samples']:,}</div>
+                    <div class="stat-number">{formatted_valid_samples}</div>
                     <div class="stat-label">Total Samples (All Valid Days)</div>
                 </div>
                 """, unsafe_allow_html=True)
-            
             with col3:
                 avg_samples = info['total_valid_days_samples'] / info['valid_days_count'] if info['valid_days_count'] > 0 else 0
                 st.markdown(f"""
@@ -2394,19 +2656,16 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Detailed table with expander
             with st.expander("📊 View Detailed Breakdown by Date", expanded=False):
                 valid_dates_df = pd.DataFrame([
                     {
                         'No.': idx,
                         'Date': date.strftime("%d/%m/%Y"),
                         'Samples': samples,
-                        # 'Status': '✅ Valid (≥50% Pdm)'
                     }
                     for idx, (date, samples) in enumerate(sorted(info['valid_dates_samples'].items()), 1)
                 ])
                 
-                # Add total row
                 total_row = pd.DataFrame([{
                     'No.': '',
                     'Date': 'TOTAL',
@@ -2414,7 +2673,6 @@ if st.session_state.processing_complete and st.session_state.processed_data:
                     'Status': f"{info['valid_days_count']} days"
                 }])
                 valid_dates_df = pd.concat([valid_dates_df, total_row], ignore_index=True)
-                
                 st.dataframe(valid_dates_df, use_container_width=True, hide_index=True)
 
         st.markdown("---")
