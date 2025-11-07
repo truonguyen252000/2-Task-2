@@ -352,6 +352,7 @@ def clean_data(data, time_col_name="Time [UTC]"):
     
     return df_full, "\n".join(log_msg)
 
+
 def parse_excel_date(val):
     if pd.isna(val) or not val:
         return None
@@ -1719,6 +1720,67 @@ def save_table_to_excel(writer, df, group_name):
             elif cell.value in ["FAIL", "K.ĐẠT"]:
                 cell.font = Font(bold=True, color="E74C3C")
 
+def format_excel_sheet(worksheet, has_multiindex=False):
+    from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+    from openpyxl.utils import get_column_letter
+    
+    # Define styles
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    header_fill = PatternFill(start_color="ECF0F1", end_color="ECF0F1", fill_type="solid")
+    header_font = Font(bold=True)
+    
+    # Auto-adjust column widths
+    for col_idx in range(1, worksheet.max_column + 1):
+        max_length = 0
+        column_letter = get_column_letter(col_idx)
+        
+        for row_idx in range(1, worksheet.max_row + 1):
+            try:
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                if cell.value:
+                    cell_length = len(str(cell.value))
+                    if cell_length > max_length:
+                        max_length = cell_length
+            except:
+                pass
+        
+        adjusted_width = min(max_length + 2, 50)
+        worksheet.column_dimensions[column_letter].width = adjusted_width
+    
+    # Format all cells
+    header_rows = 2 if has_multiindex else 1
+    
+    for row_idx in range(1, worksheet.max_row + 1):
+        for col_idx in range(1, worksheet.max_column + 1):
+            cell = worksheet.cell(row=row_idx, column=col_idx)
+            
+            # Apply border
+            cell.border = thin_border
+            
+            # Header rows
+            if row_idx <= header_rows:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            else:
+                # Data rows - center alignment
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                
+                # Color coding for status
+                if cell.value in ["PASS", "ĐẠT", "✓", "Valid"]:
+                    cell.font = Font(bold=True, color="27AE60")
+                elif cell.value in ["FAIL", "K.ĐẠT", "✗", "Invalid"]:
+                    cell.font = Font(bold=True, color="E74C3C")
+                elif isinstance(cell.value, str) and "Invalid" in cell.value:
+                    cell.font = Font(color="E74C3C")
+                elif isinstance(cell.value, str) and "Valid" in cell.value:
+                    cell.font = Font(color="27AE60")
+
 def save_pdf(tables, out_pdf, base_name):
     PAGE_WIDTH, PAGE_HEIGHT = portrait(A4)
     LEFT_MARGIN = RIGHT_MARGIN = 36
@@ -2329,49 +2391,73 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
             out_pdf_path = os.path.join(save_folder, f"Output_{base_name}.pdf")
 
             with pd.ExcelWriter(out_excel_path, engine="openpyxl") as writer:
+                # Summary tables với title
                 if not table_pst.empty:
                     save_table_to_excel(writer, table_pst, "Pst")
                 if not table_thdu.empty:
                     save_table_to_excel(writer, table_thdu, "THDu")
                 if not table_tddi.empty:
                     save_table_to_excel(writer, table_tddi, "TDDi")
-                
-                # Plt tables (24h and 6-18)
                 if not table_plt_24h.empty:
                     save_table_to_excel(writer, table_plt_24h, "Plt_24h")
                 if not table_plt_6to18.empty:
                     save_table_to_excel(writer, table_plt_6to18, "Plt_6to18")
-                
                 if not table_uneg.empty:
                     save_table_to_excel(writer, table_uneg, "u0Avg")
-                table_vh_order.to_excel(writer, sheet_name="Voltage Harmonics by Order")
-                table_ch_order.to_excel(writer, sheet_name="Current Harmonics by Order")
+                
+                # Các bảng khác - format trực tiếp
+                if not table_vh_order.empty:
+                    table_vh_order.to_excel(writer, sheet_name="Voltage Harmonics by Order")
+                    format_excel_sheet(writer.sheets["Voltage Harmonics by Order"], has_multiindex=True)
+                
+                if not table_ch_order.empty:
+                    table_ch_order.to_excel(writer, sheet_name="Current Harmonics by Order")
+                    format_excel_sheet(writer.sheets["Current Harmonics by Order"], has_multiindex=True)
+                
                 if not table_thd_max.empty:
                     table_thd_max.to_excel(writer, sheet_name="THD_Max_Values", index=False)
+                    format_excel_sheet(writer.sheets["THD_Max_Values"], has_multiindex=False)
+                
                 if not table_tdd_max.empty:
                     table_tdd_max.to_excel(writer, sheet_name="TDD_Max_Values", index=False)
+                    format_excel_sheet(writer.sheets["TDD_Max_Values"], has_multiindex=False)
+                
                 if not daily_pdm_table.empty:
                     daily_pdm_table.to_excel(writer, sheet_name="Daily_Pdm_Distribution", index=False)
+                    format_excel_sheet(writer.sheets["Daily_Pdm_Distribution"], has_multiindex=False)
+                
                 if not table_vh_max.empty:
                     table_vh_max.to_excel(writer, sheet_name="Voltage_Harmonics_Max", index=False)
+                    format_excel_sheet(writer.sheets["Voltage_Harmonics_Max"], has_multiindex=False)
+                
                 if not table_ch_max.empty:
                     table_ch_max.to_excel(writer, sheet_name="Current_Harmonics_Max", index=False)
+                    format_excel_sheet(writer.sheets["Current_Harmonics_Max"], has_multiindex=False)
                 
-                try:
-                    if not stat_summary_pst.empty:
-                        stat_summary_pst.to_excel(writer, sheet_name="Power_Stats_Pst", startrow=1)
-                    if not stat_summary_plt.empty:
-                        stat_summary_plt.to_excel(writer, sheet_name="Plt_Statistics_24h", startrow=1)
-                    if not stat_summary_plt_6to18.empty:
-                        stat_summary_plt_6to18.to_excel(writer, sheet_name="Plt_Statistics_6to18", startrow=1)
-                    if not stat_summary_uneg.empty:
-                        stat_summary_uneg.to_excel(writer, sheet_name="Power_Stats_Uneg", startrow=1)
-                    if not stat_summary_vh.empty:
-                        stat_summary_vh.to_excel(writer, sheet_name="Voltage_Harmonics_by_%Pdm", startrow=1)
-                    if not stat_summary_ch.empty:
-                        stat_summary_ch.to_excel(writer, sheet_name="Current_Harmonics_by_%Pdm", startrow=1)
-                except Exception:
-                    pass
+                # Stats tables với multiindex
+                if not stat_summary_pst.empty:
+                    stat_summary_pst.to_excel(writer, sheet_name="Power_Stats_Pst", startrow=0)
+                    format_excel_sheet(writer.sheets["Power_Stats_Pst"], has_multiindex=True)
+                
+                if not stat_summary_plt.empty:
+                    stat_summary_plt.to_excel(writer, sheet_name="Plt_Statistics_24h", startrow=0)
+                    format_excel_sheet(writer.sheets["Plt_Statistics_24h"], has_multiindex=True)
+                
+                if not stat_summary_plt_6to18.empty:
+                    stat_summary_plt_6to18.to_excel(writer, sheet_name="Plt_Statistics_6to18", startrow=0)
+                    format_excel_sheet(writer.sheets["Plt_Statistics_6to18"], has_multiindex=True)
+                
+                if not stat_summary_uneg.empty:
+                    stat_summary_uneg.to_excel(writer, sheet_name="Power_Stats_Uneg", startrow=0)
+                    format_excel_sheet(writer.sheets["Power_Stats_Uneg"], has_multiindex=True)
+                
+                if not stat_summary_vh.empty:
+                    stat_summary_vh.to_excel(writer, sheet_name="Voltage_Harmonics_by_%Pdm", startrow=0)
+                    format_excel_sheet(writer.sheets["Voltage_Harmonics_by_%Pdm"], has_multiindex=True)
+                
+                if not stat_summary_ch.empty:
+                    stat_summary_ch.to_excel(writer, sheet_name="Current_Harmonics_by_%Pdm", startrow=0)
+                    format_excel_sheet(writer.sheets["Current_Harmonics_by_%Pdm"], has_multiindex=True)
 
             png_saved = plot_and_save(data, base_name, save_folder)
             
@@ -2982,4 +3068,5 @@ elif not st.session_state.processing_complete:
             <div style="color: #7f8c8d; margin-top: 0.5rem;">Download Excel, PDF, and PNG reports</div>
         </div>
         """, unsafe_allow_html=True)
- 
+        
+        
