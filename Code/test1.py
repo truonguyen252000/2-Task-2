@@ -229,7 +229,8 @@ import io
 import tempfile
 import matplotlib.pyplot as plt
 import warnings
-from openpyxl.styles import Alignment
+# from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from reportlab.lib.pagesizes import A4, portrait
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
@@ -350,7 +351,6 @@ def clean_data(data, time_col_name="Time [UTC]"):
         df_full = df_cut.copy()
     
     return df_full, "\n".join(log_msg)
-
 
 def parse_excel_date(val):
     if pd.isna(val) or not val:
@@ -1649,18 +1649,75 @@ def plot_and_save(data, file_name, out_folder):
     return fig_path
 
 def save_table_to_excel(writer, df, group_name):
+    from openpyxl.styles import Font, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+    
     df_copy = df.copy()
     df_copy.to_excel(writer, sheet_name=group_name + "_summary", index=True, startrow=1)
     worksheet = writer.sheets[group_name + "_summary"]
     last_col = len(df_copy.columns) + 1
+    
+    # Merge and format title row
     try:
         merge_range = f"A1:{chr(64+last_col)}1"
         worksheet.merge_cells(merge_range)
     except Exception:
         pass
-    cell = worksheet.cell(row=1, column=1)
-    cell.value = group_name
-    cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    title_cell = worksheet.cell(row=1, column=1)
+    title_cell.value = group_name
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    title_cell.font = Font(bold=True, size=14)
+    title_cell.fill = PatternFill(start_color="3498DB", end_color="3498DB", fill_type="solid")
+    title_cell.font = Font(bold=True, size=14, color="FFFFFF")
+    
+    # Auto-adjust column widths - FIX for merged cells
+    for col_idx in range(1, worksheet.max_column + 1):
+        max_length = 0
+        column_letter = get_column_letter(col_idx)
+        
+        for row_idx in range(1, worksheet.max_row + 1):
+            try:
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                if cell.value:
+                    cell_length = len(str(cell.value))
+                    if cell_length > max_length:
+                        max_length = cell_length
+            except:
+                pass
+        
+        adjusted_width = min(max_length + 2, 50)  # Max width 50
+        worksheet.column_dimensions[column_letter].width = adjusted_width
+    
+    # Format header row (row 2)
+    header_fill = PatternFill(start_color="ECF0F1", end_color="ECF0F1", fill_type="solid")
+    header_font = Font(bold=True)
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    for col_idx in range(1, worksheet.max_column + 1):
+        cell = worksheet.cell(row=2, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+    
+    # Format data rows - Center alignment for all cells
+    for row_idx in range(3, worksheet.max_row + 1):
+        for col_idx in range(1, worksheet.max_column + 1):
+            cell = worksheet.cell(row=row_idx, column=col_idx)
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = thin_border
+            
+            # Color coding for status cells
+            if cell.value in ["PASS", "ĐẠT"]:
+                cell.font = Font(bold=True, color="27AE60")
+            elif cell.value in ["FAIL", "K.ĐẠT"]:
+                cell.font = Font(bold=True, color="E74C3C")
 
 def save_pdf(tables, out_pdf, base_name):
     PAGE_WIDTH, PAGE_HEIGHT = portrait(A4)
