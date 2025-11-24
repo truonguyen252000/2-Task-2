@@ -696,7 +696,6 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
                 '{valid_days_count}': str(valid_days_count),
                 '{total_days}': str(int(total_samples / 144)) if total_samples > 0 else str(len(df_data))
             }
-            
             # Replace in paragraphs
             for paragraph in doc.paragraphs:
                 for placeholder, value in stats_placeholder_map.items():
