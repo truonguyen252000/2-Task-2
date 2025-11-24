@@ -244,11 +244,10 @@ import re
 import datetime
 warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore")
-
+# I. Data Preprocessing Functions
 def clean_data(data, time_col_name="Time [UTC]"):
     if time_col_name not in data.columns:
         return data, "No time column found"
-    
     df = data.copy()
     df[time_col_name] = pd.to_datetime(df[time_col_name], errors="coerce")
     df = df.dropna(subset=[time_col_name]).sort_values(time_col_name).reset_index(drop=True)   
@@ -258,9 +257,8 @@ def clean_data(data, time_col_name="Time [UTC]"):
     start, end = df[time_col_name].iloc[0], df[time_col_name].iloc[-1]
     start_is_midnight = start.time() == pd.Timestamp("00:00").time()
     end_is_2350 = end.time().hour == 23 and end.time().minute == 50
-    
     log_msg = []
-    
+
     if start_is_midnight and end_is_2350:
         df_cut = df.copy()
         log_msg.append("✅ Data already starts at 00:00 and ends at 23:50")
@@ -273,9 +271,7 @@ def clean_data(data, time_col_name="Time [UTC]"):
         log_msg.append(f"📅 Cut data: {start_date.date()} to {end_date.date()}, {len(df_cut)} rows")
     
     df_cut = df_cut.sort_values(time_col_name).reset_index(drop=True)
-    
     df_cut["date"] = df_cut[time_col_name].dt.date
-    
     all_dates = sorted(df_cut["date"].unique())
     days_to_remove = []
     days_report = []
@@ -287,23 +283,18 @@ def clean_data(data, time_col_name="Time [UTC]"):
             freq="10min"
         )
         
-        actual_times = set(df_cut[df_cut["date"] == date][time_col_name])
-        
-        missing_count = len(set(expected_times) - actual_times)
-        
-        days_report.append(f"{date}: {missing_count}/144 missing")
-        
+        actual_times = set(df_cut[df_cut["date"] == date][time_col_name])    
+        missing_count = len(set(expected_times) - actual_times)  
+        days_report.append(f"{date}: {missing_count}/144 missing")   
         if missing_count > 15:
             days_to_remove.append(date)
     
     log_msg.append("\n📊 Daily Missing Report:")
     for report in days_report:
         log_msg.append(f"   {report}")
-    
     if days_to_remove:
         df_cut = df_cut[~df_cut["date"].isin(days_to_remove)].copy()
-        log_msg.append(f"\n🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")
-        
+        log_msg.append(f"\n🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")    
         if df_cut.empty:
             return df_cut, "\n".join(log_msg) + "\n⚠️ No data remaining after filtering"
     else:
@@ -323,8 +314,7 @@ def clean_data(data, time_col_name="Time [UTC]"):
                 end=pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=50),
                 freq="10min"
             )
-            all_times.extend(day_times)
-        
+            all_times.extend(day_times) 
         all_times = pd.DatetimeIndex(all_times)
         missing_times = all_times.difference(df_cut[time_col_name])
         
@@ -352,7 +342,7 @@ def clean_data(data, time_col_name="Time [UTC]"):
     
     return df_full, "\n".join(log_msg)
 
-
+# Formastting and Word Processing Functions
 def parse_excel_date(val):
     if pd.isna(val) or not val:
         return None
@@ -370,7 +360,6 @@ def parse_excel_date(val):
             except:
                 continue
     return None
-
 
 def format_cell_value(value, is_date=False, is_integer=False):
     """Định dạng giá trị ô theo kiểu dữ liệu (chuẩn EU/VN: dấu phẩy thập phân, dấu chấm hàng nghìn)"""
@@ -440,13 +429,12 @@ def create_column_mapping(df_columns, word_headers):
                 mapping[col] = idx
                 break
     return mapping
-
+# Fill Harmonics by PDM Function
 def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator, table_name):
     table, bac_col_idx = None, None
     for tbl in doc.tables:
         found_bac_col = None
-        has_indicator = False
-        
+        has_indicator = False      
         for row_idx, row in enumerate(tbl.rows):
             row_text = " ".join([c.text.strip() for c in row.cells]).lower()
             
@@ -457,7 +445,6 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
                 cell_lower = cell.text.strip().lower()
                 if ("bậc" in cell_lower or "harmonic" in cell_lower) and len(cell.text.strip()) < 20:
                     found_bac_col = cell_idx
-        
         if found_bac_col is not None and has_indicator:
             full_text = " ".join([" ".join([c.text for c in row.cells]) for row in tbl.rows]).lower()
             pdm_occurrences = full_text.count('%') + full_text.count('pđm') + full_text.count('pdm')
@@ -469,18 +456,15 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
 
     if not table:
         return f"❌ Không tìm thấy bảng {table_name}"
-
     pdm_sections = []
     seen_pdm = set()
     
     for row_idx in range(min(len(table.rows), 50)):
         for cell_idx, cell in enumerate(table.rows[row_idx].cells):
             if cell_idx <= bac_col_idx:
-                continue
-            
+                continue       
             txt = cell.text.strip()
-            m = re.search(r'(\d{1,3})\s*%', txt)
-            
+            m = re.search(r'(\d{1,3})\s*%', txt)   
             if m:
                 pdm_value = int(m.group(1))
                 
@@ -509,7 +493,6 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
                       for col in df.columns]
     else:
         df.columns = [str(c).strip() for c in df.columns]
-
     pdm_col = next((c for c in df.columns 
                     if any(x in c.lower().replace(" ", "") 
                           for x in ["pdm", "%pđm", "pđm"])), 
@@ -615,10 +598,6 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
                         value = excel_row[col_name]
                         if pd.isna(value):
                             continue
-                        
-                        # val_text = (str(int(value)) if isinstance(value, (int, float)) and float(value).is_integer() 
-                        #            else f"{value:.2f}" if isinstance(value, (int, float)) 
-                        #            else str(value))
                         if isinstance(value, (int, float)):
                             if float(value).is_integer():
                                 val_text = f"{int(value):,}".replace(",", ".")
@@ -650,7 +629,6 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
                 '{uh_th}': format_number_eu(thresholds_dict.get('vh', ''), decimals=1),
                 '{ih_th}': format_number_eu(thresholds_dict.get('ch', ''), decimals=1)
             }
-            
             # Replace in paragraphs
             for paragraph in doc.paragraphs:
                 for placeholder, value in placeholder_map.items():
@@ -710,7 +688,7 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
             
             # === TẠO MAPPING ĐỂ REPLACE ===
             stats_placeholder_map = {
-                '{Pdm}': format_number_eu(pdm_mw, decimals=0),
+                '{Pdm}': format_number_eu(pdm_mw, decimals=2),
                 '{valid_samples}': f"{valid_samples:,}".replace(",", "."),
                 '{total_samples}': f"{total_samples:,}".replace(",", "."),
                 '{sample_above_50}': f"{samples_above_50:,}".replace(",", "."),
