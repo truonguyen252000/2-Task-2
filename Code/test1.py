@@ -456,36 +456,50 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
 
     if not table:
         return f"❌ Không tìm thấy bảng {table_name}"
+    
     pdm_sections = []
     seen_pdm = set()
-    
+
+    pattern_range = re.compile(r'(\d{1,3})\s*%\s*<\s*P\s*[≤<=]\s*(\d{1,3})\s*%', re.IGNORECASE)
+    pattern_simple = re.compile(r'(\d{1,3})\s*%')
+
     for row_idx in range(min(len(table.rows), 50)):
         for cell_idx, cell in enumerate(table.rows[row_idx].cells):
             if cell_idx <= bac_col_idx:
-                continue       
+                continue
+            
             txt = cell.text.strip()
-            m = re.search(r'(\d{1,3})\s*%', txt)   
+            
+            m = pattern_range.search(txt)
             if m:
-                pdm_value = int(m.group(1))
-                
-                if pdm_value not in [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] or pdm_value in seen_pdm:
+                pdm_value = int(m.group(2))  
+            else:
+                m = pattern_simple.search(txt)
+                if m:
+                    pdm_value = int(m.group(1))
+                else:
                     continue
-                
-                first_max_col = None
-                for check_row in range(row_idx, min(row_idx + 4, len(table.rows))):
-                    for check_col in range(cell_idx, min(cell_idx + 20, len(table.rows[check_row].cells))):
-                        cell_text = table.rows[check_row].cells[check_col].text.strip().lower()
-                        if "max" in cell_text and len(cell_text) < 15:
-                            first_max_col = check_col
-                            break
-                    if first_max_col is not None:
+            
+            if pdm_value not in [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] or pdm_value in seen_pdm:
+                continue
+            
+            first_max_col = None
+            for check_row in range(row_idx, min(row_idx + 4, len(table.rows))):
+                for check_col in range(cell_idx, min(cell_idx + 20, len(table.rows[check_row].cells))):
+                    cell_text = table.rows[check_row].cells[check_col].text.strip().lower()
+                    if "max" in cell_text and len(cell_text) < 15:
+                        first_max_col = check_col
                         break
-                
                 if first_max_col is not None:
-                    pdm_sections.append((pdm_value, first_max_col, row_idx))
-                    seen_pdm.add(pdm_value)
+                    break
+            
+            if first_max_col is not None:
+                pdm_sections.append((pdm_value, first_max_col, row_idx))
+                seen_pdm.add(pdm_value)
 
     pdm_sections.sort(key=lambda x: x[0])
+
+
 
     df = pd.read_excel(excel_path, sheet_name=sheet_name, header=0)
     if isinstance(df.columns, pd.MultiIndex):
@@ -664,14 +678,14 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
             valid_days_count = len(df_data[df_data["Status"].astype(str).str.contains("Valid|✓", case=False, na=False)])
             
             pdm_cols = [col for col in df_stats.columns if '%' in str(col) and col not in ['Date', 'Index', 'Status']]
-            
+
             if len(pdm_cols) > 0:
                 total_row = df_stats[df_stats["Date"].astype(str).str.contains("TOTAL|TỔNG", case=False, na=False)]
                 if len(total_row) > 0:
-                    cols_above_50 = [col for col in pdm_cols if any(str(p) in col for p in ['50%', '60%', '70%', '80%', '90%', '100%'])]
+                    cols_above_50 = [col for col in pdm_cols if any(str(p) in col for p in ['60%', '70%', '80%', '90%', '100%'])]
                     samples_above_50 = int(total_row[cols_above_50].sum(axis=1).iloc[0]) if cols_above_50 else 0
                 else:
-                    cols_above_50 = [col for col in pdm_cols if any(str(p) in col for p in ['50%', '60%', '70%', '80%', '90%', '100%'])]
+                    cols_above_50 = [col for col in pdm_cols if any(str(p) in col for p in ['60%', '70%', '80%', '90%', '100%'])]
                     samples_above_50 = int(df_data[cols_above_50].sum().sum()) if cols_above_50 else 0
             else:
                 samples_above_50 = 0
@@ -1552,7 +1566,7 @@ def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None, data_after_cle
         total_samples = len(data_copy)
     valid_samples = len(data_copy[data_copy["Ptot+(Avg) [W]"] > 0])
 
-    samples_above_50 = sum(valid_total_counts[4:])  
+    samples_above_50 = sum(valid_total_counts[5:])  
     total_valid_days_samples = sum(valid_dates_samples.values())
     total_days = int(total_samples / 144) if total_samples > 0 else len(dates)
 
