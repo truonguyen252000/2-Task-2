@@ -620,7 +620,7 @@ def fill_harmonics_by_pdm_generic(doc, excel_path, sheet_name, keyword_indicator
                         else:
                             val_text = str(value)
                             
-                        set_cell_format(row.cells[word_col], val_text, font_size=5)
+                        set_cell_format(row.cells[word_col], val_text, font_size=5.5)
                         filled_stats[pdm_value] += 1
                     except:
                         continue
@@ -951,33 +951,86 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
 # PHẦN 5: Bảng thống kê Pst, Plt, Uneg theo %Pdm
         print("\n📋 PHẦN 5: Bảng thống kê theo %Pdm")
         
+        # def fill_stats_with_keys(sheet_name, keyword, name):
+        #     try:
+        #         df = pd.read_excel(excel_path, sheet_name=sheet_name)
+        #         data_dict = {str(df.iloc[i, 0]).strip().lower().replace(" ", "").replace("\n", ""): 
+        #                      [df.iloc[i, j] for j in range(1, len(df.columns))] for i in range(len(df))}
+                
+        #         _, table, start_row = find_table_by_keyword(doc, keyword)
+        #         if not table:
+        #             return f"⚠️ {name}: Không tìm thấy bảng"
+                
+        #         filled = 0
+        #         for row_idx in range(start_row + 2, len(table.rows)):
+        #             key = table.rows[row_idx].cells[0].text.strip().lower().replace(" ", "").replace("\n", "")
+        #             if not key:
+        #                 continue
+                    
+        #             for excel_key, values in data_dict.items():
+        #                 if key in excel_key or excel_key in key:
+        #                     for col_idx, value in enumerate(values):
+        #                         if col_idx + 1 < len(table.rows[row_idx].cells) and value is not None:
+        #                             set_cell_format(table.rows[row_idx].cells[col_idx + 1], format_cell_value(value))
+        #                     filled += 1
+        #                     break
+                
+        #         return f"✅ {name}: {filled} dòng"
+        #     except Exception as e:
+        #         return f"⚠️ {name}: {e}"
+
+
         def fill_stats_with_keys(sheet_name, keyword, name):
             try:
                 df = pd.read_excel(excel_path, sheet_name=sheet_name)
-                data_dict = {str(df.iloc[i, 0]).strip().lower().replace(" ", "").replace("\n", ""): 
-                             [df.iloc[i, j] for j in range(1, len(df.columns))] for i in range(len(df))}
                 
+                data_dict = {}
+                for i in range(len(df)):
+                    key = str(df.iloc[i, 0]).strip().lower().replace(" ", "").replace("\n", "")
+                    
+                    values = [df.iloc[i, j] for j in range(1, len(df.columns))]
+                    data_dict[key] = values
                 _, table, start_row = find_table_by_keyword(doc, keyword)
                 if not table:
                     return f"⚠️ {name}: Không tìm thấy bảng"
                 
                 filled = 0
                 for row_idx in range(start_row + 2, len(table.rows)):
-                    key = table.rows[row_idx].cells[0].text.strip().lower().replace(" ", "").replace("\n", "")
-                    if not key:
+                    word_cell_text = table.rows[row_idx].cells[0].text.strip()
+                    if not word_cell_text:
                         continue
+                    import re
+                    match = re.search(r'≤\s*(\d+)\s*%', word_cell_text)
                     
-                    for excel_key, values in data_dict.items():
-                        if key in excel_key or excel_key in key:
-                            for col_idx, value in enumerate(values):
-                                if col_idx + 1 < len(table.rows[row_idx].cells) and value is not None:
-                                    set_cell_format(table.rows[row_idx].cells[col_idx + 1], format_cell_value(value))
-                            filled += 1
-                            break
+                    if match:
+                        upper_bound = match.group(1)  
+                        target_key = f"{upper_bound}%" 
+                    else:
+                        numbers = re.findall(r'\d+', word_cell_text)
+                        if numbers:
+                            target_key = f"{numbers[-1]}%"  
+                        else:
+                            continue
+                    target_key_lower = target_key.lower()
+                    
+                    if target_key_lower in data_dict:
+                        values = data_dict[target_key_lower]
+                        
+                        for col_idx, value in enumerate(values):
+                            cell_idx = col_idx + 1
+                            if cell_idx < len(table.rows[row_idx].cells) and value is not None:
+                                formatted_value = format_cell_value(value)
+                                set_cell_format(
+                                    table.rows[row_idx].cells[cell_idx], 
+                                    formatted_value
+                                )
+                        
+                        filled += 1
                 
                 return f"✅ {name}: {filled} dòng"
             except Exception as e:
-                return f"⚠️ {name}: {e}"
+                return f"⚠️ {name}: {str(e)}"
+    
         
         def fill_plt_table():
             try:
