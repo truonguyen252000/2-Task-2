@@ -1031,7 +1031,6 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
             except Exception as e:
                 return f"⚠️ {name}: {str(e)}"
     
-        
         def fill_plt_table():
             try:
                 df = pd.read_excel(excel_path, sheet_name="Plt_Statistics_24h")
