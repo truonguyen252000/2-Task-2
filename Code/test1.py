@@ -332,78 +332,56 @@ warnings.filterwarnings("ignore")
     
 #     return df_full, "\n".join(log_msg)
 def clean_data(data, time_col_name="Time [UTC]"):
-
     if time_col_name not in data.columns:
         return data, "No time column found"
     
     df = data.copy()
-    log_msg = []
     
-    # ====== BƯỚC 1: CHUẨN HÓA TIMESTAMP ======
-    log_msg.append("🔧 STEP 1: Standardizing timestamps...")
-    
-    # Convert to datetime
+    # ====== 1. CHUYỂN ĐỔI VÀ LÀM TRÒN TIMESTAMP ======
     df[time_col_name] = pd.to_datetime(df[time_col_name], errors="coerce")
-    initial_count = len(df)
     df = df.dropna(subset=[time_col_name])
-    dropped_invalid = initial_count - len(df)
-    
-    if dropped_invalid > 0:
-        log_msg.append(f"   ⚠️ Dropped {dropped_invalid} rows with invalid timestamps")
     
     if df.empty:
-        return df, "\n".join(log_msg) + "\n⚠️ Empty after removing invalid timestamps"
+        return df, "Empty after removing invalid timestamps"
     
-    # Làm tròn về 10 phút gần nhất
+    # Làm tròn về bội số 10 phút (0, 10, 20, ..., 50)
     df["Time_fixed"] = df[time_col_name].dt.round("10min")
     
-    # ====== BƯỚC 2: XỬ LÝ DUPLICATE TIMESTAMPS ======
-    log_msg.append("\n🔍 STEP 2: Handling duplicate timestamps...")
-    
+    # ====== 2. XỬ LÝ TRÙNG LẶP SAU LÀM TRÒN ======
     df = df.sort_values("Time_fixed")
     duplicates = df[df.duplicated(subset=["Time_fixed"], keep=False)]
     
-    if len(duplicates) == 0:
-        log_msg.append("   ✅ No duplicates after standardization")
-    else:
-        dup_counts = duplicates.groupby("Time_fixed").size()
-        log_msg.append(f"   ⚠️ Found {len(dup_counts)} duplicate timestamps:")
-        
-        # Hiển thị tối đa 5 ví dụ
-        for idx, (ts, cnt) in enumerate(dup_counts.items()):
-            if idx < 5:
-                log_msg.append(f"      - {ts}: {cnt} occurrences")
-            else:
-                log_msg.append(f"      ... and {len(dup_counts) - 5} more")
-                break
-        
-        # Giữ bản ghi đầu tiên
-        before_dedup = len(df)
-        df = df.drop_duplicates(subset=["Time_fixed"], keep="first")
-        after_dedup = len(df)
-        log_msg.append(f"   🗑️ Removed {before_dedup - after_dedup} duplicate rows")
+    log_msg = []
     
-    # Cập nhật timestamp chính thức
+    if len(duplicates) > 0:
+        dup_counts = duplicates.groupby("Time_fixed").size()
+        log_msg.append(f"⚠️ Found {len(dup_counts)} duplicate timestamps after rounding:")
+        for ts, cnt in list(dup_counts.items())[:10]:  # Hiển thị tối đa 10
+            log_msg.append(f"   • {ts}: {cnt} occurrences")
+        if len(dup_counts) > 10:
+            log_msg.append(f"   ... and {len(dup_counts) - 10} more")
+        
+        # Giữ bản ghi đầu tiên, xóa các bản trùng
+        df = df.drop_duplicates(subset=["Time_fixed"], keep="first")
+        log_msg.append(f"✅ Kept first occurrence, removed {len(duplicates) - len(df)} duplicates")
+    else:
+        log_msg.append("✅ No duplicate timestamps after rounding")
+    
+    # Cập nhật cột thời gian chính thức
     df[time_col_name] = df["Time_fixed"]
     df = df.drop(columns=["Time_fixed"])
     df = df.sort_values(time_col_name).reset_index(drop=True)
     
-    if df.empty:
-        return df, "\n".join(log_msg) + "\n⚠️ Empty after deduplication"
-    
-    # ====== BƯỚC 3: PHÂN TÍCH NGÀY VÀ LỌC NGÀY THIẾU NHIỀU MẪU ======
-    log_msg.append("\n📅 STEP 3: Analyzing daily data completeness...")
-    
+    # ====== 3. PHÂN TÍCH THEO NGÀY ======
     df["date"] = df[time_col_name].dt.date
     all_dates = sorted(df["date"].unique())
     
     if len(all_dates) == 0:
         return df, "\n".join(log_msg) + "\n⚠️ No valid dates found"
     
-    log_msg.append(f"   📊 Date range: {all_dates[0]} to {all_dates[-1]} ({len(all_dates)} days)")
-    log_msg.append(f"   📈 Total rows: {len(df)}")
+    log_msg.append(f"\n📅 Date range: {all_dates[0]} to {all_dates[-1]} ({len(all_dates)} days)")
     
-    df_cut = df.copy()
+    # ====== 4. KIỂM TRA TIMESTAMPS THIẾU THEO TỪNG NGÀY ======
     days_to_remove = []
     days_report = []
     
@@ -413,38 +391,35 @@ def clean_data(data, time_col_name="Time [UTC]"):
             end=pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=50),
             freq="10min"
         )
+        actual_times = set(df[df["date"] == date][time_col_name])
+        missing_count = len(set(expected_times) - actual_times)
         
-        actual_times = set(df_cut[df_cut["date"] == date][time_col_name])    
-        missing_count = len(set(expected_times) - actual_times)  
-        days_report.append(f"{date}: {missing_count}/144 missing")   
+        days_report.append(f"{date}: {missing_count}/144 missing")
         
         if missing_count > 15:
             days_to_remove.append(date)
     
-    log_msg.append("\n   📋 Daily Missing Report:")
+    log_msg.append("\n📊 Daily Missing Timestamps Report:")
     for report in days_report:
-        log_msg.append(f"      {report}")
+        log_msg.append(f"   {report}")
     
+    # ====== 5. LỌC NGÀY KHÔNG ĐẠT YÊU CẦU ======
     if days_to_remove:
-        df_cut = df_cut[~df_cut["date"].isin(days_to_remove)].copy()
-        log_msg.append(f"\n   🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")
-        log_msg.append(f"      Removed dates: {', '.join(map(str, days_to_remove[:5]))}{' ...' if len(days_to_remove) > 5 else ''}")
+        df = df[~df["date"].isin(days_to_remove)].copy()
+        log_msg.append(f"\n🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")
         
-        if df_cut.empty:
-            return df_cut, "\n".join(log_msg) + "\n⚠️ No data remaining after filtering"
+        if df.empty:
+            return df, "\n".join(log_msg) + "\n⚠️ No data remaining after filtering"
     else:
-        log_msg.append("\n   ✅ All days have ≤15 missing timestamps")
+        log_msg.append("\n✅ All days have ≤15 missing timestamps")
     
-    # ====== BƯỚC 4: ĐIỀN CÁC TIMESTAMP CÒN THIẾU ======
-    log_msg.append("\n🔧 STEP 4: Filling missing timestamps...")
+    # ====== 6. ĐIỀN TIMESTAMPS THIẾU (CHỈ CHO NGÀY HỢP LỆ) ======
+    remaining_dates = sorted(df["date"].unique())
+    log_msg.append(f"\n📈 {len(remaining_dates)} valid days remaining")
     
-    remaining_dates = sorted(df_cut["date"].unique())
-    log_msg.append(f"   📈 {len(remaining_dates)} valid days remaining")
-    
-    df_cut = df_cut.drop(columns=["date"]).reset_index(drop=True)
+    df = df.drop(columns=["date"]).reset_index(drop=True)
     
     if len(remaining_dates) > 0:
-        # Tạo danh sách tất cả timestamp cần có
         all_times = []
         for date in remaining_dates:
             day_times = pd.date_range(
@@ -455,47 +430,32 @@ def clean_data(data, time_col_name="Time [UTC]"):
             all_times.extend(day_times)
         
         all_times = pd.DatetimeIndex(all_times)
-        missing_times = all_times.difference(df_cut[time_col_name])
+        missing_times = all_times.difference(df[time_col_name])
         
         if len(missing_times) > 0:
-            log_msg.append(f"   ⚠️ Filling {len(missing_times)} missing timestamps in valid days")
+            log_msg.append(f"⚠️ Filling {len(missing_times)} missing timestamps in valid days")
             missing_df = pd.DataFrame({time_col_name: missing_times})
-            df_full = pd.concat([df_cut, missing_df], ignore_index=True)
-            df_full = df_full.sort_values(time_col_name).reset_index(drop=True)
-            
-            # Forward fill then backward fill
-            df_full = df_full.ffill().bfill()
+            df = pd.concat([df, missing_df], ignore_index=True)
+            df = df.sort_values(time_col_name).reset_index(drop=True)
+            df = df.ffill().bfill()
         else:
-            log_msg.append("   ✅ No missing timestamps in valid days")
-            df_full = df_cut.copy()
+            log_msg.append("✅ No missing timestamps in valid days")
         
-        # ====== BƯỚC 5: KIỂM TRA KẾT QUẢ CUỐI CÙNG ======
-        log_msg.append("\n✔️ STEP 5: Final validation...")
-        
-        df_full["date"] = df_full[time_col_name].dt.date
-        samples_per_day = df_full.groupby("date").size()
+        # ====== 7. KIỂM TRA CUỐI CÙNG ======
+        df["date"] = df[time_col_name].dt.date
+        samples_per_day = df.groupby("date").size()
         days_incomplete = samples_per_day[samples_per_day < 144]
         
         if len(days_incomplete) > 0:
-            log_msg.append(f"   ⚠️ {len(days_incomplete)} days still have <144 samples:")
+            log_msg.append(f"⚠️ {len(days_incomplete)} days still have <144 samples:")
             for date, count in days_incomplete.items():
-                log_msg.append(f"      - {date}: {count}/144 samples")
+                log_msg.append(f"   • {date}: {count} samples")
         else:
-            log_msg.append(f"   ✅ All {len(samples_per_day)} days have exactly 144 samples")
+            log_msg.append(f"✅ All {len(samples_per_day)} days have exactly 144 samples")
         
-        df_full = df_full.drop(columns=["date"])
-    else:
-        df_full = df_cut.copy()
+        df = df.drop(columns=["date"])
     
-    # ====== SUMMARY ======
-    log_msg.append("\n" + "="*60)
-    log_msg.append("✅ DATA CLEANING COMPLETED")
-    log_msg.append(f"   📊 Final dataset: {len(df_full)} rows × {len(df_full.columns)} columns")
-    log_msg.append(f"   📅 Date range: {df_full[time_col_name].min().date()} to {df_full[time_col_name].max().date()}")
-    log_msg.append(f"   ⏱️ Time range: {df_full[time_col_name].min().time()} to {df_full[time_col_name].max().time()}")
-    log_msg.append("="*60)
-    
-    return df_full, "\n".join(log_msg)
+    return df, "\n".join(log_msg)
 # Formastting and Word Processing Functions
 def parse_excel_date(val):
     if pd.isna(val) or not val:
@@ -1634,14 +1594,14 @@ def make_voltage_harmonics_by_pdm(data, bins, labels):
     phases = [("Phase A", "U1"), ("Phase B", "U2"), ("Phase C", "U3")]
     thd_cols = ["THD U1(AvgOn) [%]", "THD U2(AvgOn) [%]", "THD U3(AvgOn) [%]"]
     rows_vh = []
-    for (lower, upper), label in zip(bins, labels):
-        if lower <= 0:
-            mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
-        else:
-            mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
     # for (lower, upper), label in zip(bins, labels):
-    # # Tất cả các khoảng: lower < P <= upper
-    #     mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
+    #     if lower <= 0:
+    #         mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
+    #     else:
+    #         mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
+    for (lower, upper), label in zip(bins, labels):
+    # Tất cả các khoảng: lower < P <= upper
+        mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
         df_bin = data.loc[mask]
         count = int(mask.sum())
         for h in harmonic_orders:
@@ -2538,7 +2498,7 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                         lower = (i - 1) * 0.1 * Pdm_max_val
                         upper = i * 0.1 * Pdm_max_val
                         bins.append((lower, upper))
-#                     #     labels.append(f"{i*10}%")
+                        labels.append(f"{i*10}%")
 #                     daily_pdm_table, daily_summary_text, pdm_detailed_info, measurement_start_str, measurement_end_str = make_daily_pdm_distribution(data, Pdm_max_val, data_raw, data_after_clean)
 # # Định nghĩa bins không đều: 0-15, 15-25, 25-35, 35-50, 50-55, 55-65, 65-75, 75-85, 85-95, 95-100
 #                     bins = [
@@ -2561,13 +2521,13 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                     rows_uneg = []
                     required_stat_cols = {"Pst": cols_pst, "Uneg": cols_uneg}
                     
-                    for (lower, upper), label in zip(bins, labels):
-                        if lower <= 0:
-                            mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
-                        else:
-                            mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
                     # for (lower, upper), label in zip(bins, labels):
-                    #     mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
+                    #     if lower <= 0:
+                    #         mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
+                    #     else:
+                    #         mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
+                    for (lower, upper), label in zip(bins, labels):
+                        mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
                         df_bin = data.loc[mask]
                         count = int(mask.sum())
                         
