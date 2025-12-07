@@ -245,34 +245,165 @@ import datetime
 warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore")
 # I. Data Preprocessing Functions
+# def clean_data(data, time_col_name="Time [UTC]"):
+#     if time_col_name not in data.columns:
+#         return data, "No time column found"
+#     df = data.copy()
+#     df[time_col_name] = pd.to_datetime(df[time_col_name], errors="coerce")
+#     df = df.dropna(subset=[time_col_name]).sort_values(time_col_name).reset_index(drop=True)   
+#     if df.empty:
+#         return df, "Empty after cleaning"
+    
+#     # Thay đổi: không ép cắt theo start/end. Thay vào đó xử lý theo từng ngày (giữ mọi ngày có dữ liệu)
+#     log_msg = []
+#     df = df.sort_values(time_col_name).reset_index(drop=True)
+#     df["date"] = df[time_col_name].dt.date
+#     all_dates = sorted(df["date"].unique())
+#     if len(all_dates) == 0:
+#         return df, "Empty after cleaning"
+#     df_cut = df.copy()
+#     log_msg.append(f"📅 Found dates: {all_dates[0]} to {all_dates[-1]}, {len(df_cut)} rows")
+#     days_to_remove = []
+#     days_report = []
+    
+#     for date in all_dates:
+#         expected_times = pd.date_range(
+#             start=pd.Timestamp(date),
+#             end=pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=50),
+#             freq="10min"
+#         )
+        
+#         actual_times = set(df_cut[df_cut["date"] == date][time_col_name])    
+#         missing_count = len(set(expected_times) - actual_times)  
+#         days_report.append(f"{date}: {missing_count}/144 missing")   
+#         if missing_count > 15:
+#             days_to_remove.append(date)
+    
+#     log_msg.append("\n📊 Daily Missing Report:")
+#     for report in days_report:
+#         log_msg.append(f"   {report}")
+#     if days_to_remove:
+#         df_cut = df_cut[~df_cut["date"].isin(days_to_remove)].copy()
+#         log_msg.append(f"\n🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")    
+#         if df_cut.empty:
+#             return df_cut, "\n".join(log_msg) + "\n⚠️ No data remaining after filtering"
+#     else:
+#         log_msg.append("\n✅ All days have ≤15 missing timestamps")
+    
+#     # Tính số ngày còn lại
+#     remaining_dates = sorted(df_cut["date"].unique())
+#     log_msg.append(f"\n📈 {len(remaining_dates)} valid days remaining")
+    
+#     df_cut = df_cut.drop(columns=["date"]).reset_index(drop=True)
+    
+#     if len(remaining_dates) > 0:
+#         all_times = []
+#         for date in remaining_dates:
+#             day_times = pd.date_range(
+#                 start=pd.Timestamp(date),
+#                 end=pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=50),
+#                 freq="10min"
+#             )
+#             all_times.extend(day_times) 
+#         all_times = pd.DatetimeIndex(all_times)
+#         missing_times = all_times.difference(df_cut[time_col_name])
+        
+#         if len(missing_times) > 0:
+#             log_msg.append(f"⚠️ Filling {len(missing_times)} missing timestamps in valid days")
+#             missing_df = pd.DataFrame({time_col_name: missing_times})
+#             df_full = pd.concat([df_cut, missing_df], ignore_index=True)
+#             df_full = df_full.sort_values(time_col_name).reset_index(drop=True)
+#             df_full = df_full.ffill().bfill()
+#         else:
+#             log_msg.append("✅ No missing timestamps in valid days")
+#             df_full = df_cut.copy()
+        
+#         df_full["date"] = df_full[time_col_name].dt.date
+#         samples_per_day = df_full.groupby("date").size()
+#         days_incomplete = samples_per_day[samples_per_day < 144]
+#         if len(days_incomplete) > 0:
+#             log_msg.append(f"⚠️ {len(days_incomplete)} days still have <144 samples")
+#         else:
+#             log_msg.append(f"✅ All {len(samples_per_day)} days have exactly 144 samples")
+        
+#         df_full = df_full.drop(columns=["date"])
+#     else:
+#         df_full = df_cut.copy()
+    
+#     return df_full, "\n".join(log_msg)
 def clean_data(data, time_col_name="Time [UTC]"):
+
     if time_col_name not in data.columns:
         return data, "No time column found"
+    
     df = data.copy()
-    df[time_col_name] = pd.to_datetime(df[time_col_name], errors="coerce")
-    df = df.dropna(subset=[time_col_name]).sort_values(time_col_name).reset_index(drop=True)   
-    if df.empty:
-        return df, "Empty after cleaning"
-    
-    start, end = df[time_col_name].iloc[0], df[time_col_name].iloc[-1]
-    start_is_midnight = start.time() == pd.Timestamp("00:00").time()
-    end_is_2350 = end.time().hour == 23 and end.time().minute == 50
     log_msg = []
-
-    if start_is_midnight and end_is_2350:
-        df_cut = df.copy()
-        log_msg.append("✅ Data already starts at 00:00 and ends at 23:50")
-    else:
-        start_date = (start + pd.Timedelta(days=1)).normalize()
-        end_date = (end.normalize() - pd.Timedelta(minutes=10))
-        df_cut = df[(df[time_col_name] >= start_date) & (df[time_col_name] <= end_date)]
-        if df_cut.empty:
-            return df_cut, "Empty after cutting"
-        log_msg.append(f"📅 Cut data: {start_date.date()} to {end_date.date()}, {len(df_cut)} rows")
     
-    df_cut = df_cut.sort_values(time_col_name).reset_index(drop=True)
-    df_cut["date"] = df_cut[time_col_name].dt.date
-    all_dates = sorted(df_cut["date"].unique())
+    # ====== BƯỚC 1: CHUẨN HÓA TIMESTAMP ======
+    log_msg.append("🔧 STEP 1: Standardizing timestamps...")
+    
+    # Convert to datetime
+    df[time_col_name] = pd.to_datetime(df[time_col_name], errors="coerce")
+    initial_count = len(df)
+    df = df.dropna(subset=[time_col_name])
+    dropped_invalid = initial_count - len(df)
+    
+    if dropped_invalid > 0:
+        log_msg.append(f"   ⚠️ Dropped {dropped_invalid} rows with invalid timestamps")
+    
+    if df.empty:
+        return df, "\n".join(log_msg) + "\n⚠️ Empty after removing invalid timestamps"
+    
+    # Làm tròn về 10 phút gần nhất
+    df["Time_fixed"] = df[time_col_name].dt.round("10min")
+    
+    # ====== BƯỚC 2: XỬ LÝ DUPLICATE TIMESTAMPS ======
+    log_msg.append("\n🔍 STEP 2: Handling duplicate timestamps...")
+    
+    df = df.sort_values("Time_fixed")
+    duplicates = df[df.duplicated(subset=["Time_fixed"], keep=False)]
+    
+    if len(duplicates) == 0:
+        log_msg.append("   ✅ No duplicates after standardization")
+    else:
+        dup_counts = duplicates.groupby("Time_fixed").size()
+        log_msg.append(f"   ⚠️ Found {len(dup_counts)} duplicate timestamps:")
+        
+        # Hiển thị tối đa 5 ví dụ
+        for idx, (ts, cnt) in enumerate(dup_counts.items()):
+            if idx < 5:
+                log_msg.append(f"      - {ts}: {cnt} occurrences")
+            else:
+                log_msg.append(f"      ... and {len(dup_counts) - 5} more")
+                break
+        
+        # Giữ bản ghi đầu tiên
+        before_dedup = len(df)
+        df = df.drop_duplicates(subset=["Time_fixed"], keep="first")
+        after_dedup = len(df)
+        log_msg.append(f"   🗑️ Removed {before_dedup - after_dedup} duplicate rows")
+    
+    # Cập nhật timestamp chính thức
+    df[time_col_name] = df["Time_fixed"]
+    df = df.drop(columns=["Time_fixed"])
+    df = df.sort_values(time_col_name).reset_index(drop=True)
+    
+    if df.empty:
+        return df, "\n".join(log_msg) + "\n⚠️ Empty after deduplication"
+    
+    # ====== BƯỚC 3: PHÂN TÍCH NGÀY VÀ LỌC NGÀY THIẾU NHIỀU MẪU ======
+    log_msg.append("\n📅 STEP 3: Analyzing daily data completeness...")
+    
+    df["date"] = df[time_col_name].dt.date
+    all_dates = sorted(df["date"].unique())
+    
+    if len(all_dates) == 0:
+        return df, "\n".join(log_msg) + "\n⚠️ No valid dates found"
+    
+    log_msg.append(f"   📊 Date range: {all_dates[0]} to {all_dates[-1]} ({len(all_dates)} days)")
+    log_msg.append(f"   📈 Total rows: {len(df)}")
+    
+    df_cut = df.copy()
     days_to_remove = []
     days_report = []
     
@@ -286,27 +417,34 @@ def clean_data(data, time_col_name="Time [UTC]"):
         actual_times = set(df_cut[df_cut["date"] == date][time_col_name])    
         missing_count = len(set(expected_times) - actual_times)  
         days_report.append(f"{date}: {missing_count}/144 missing")   
+        
         if missing_count > 15:
             days_to_remove.append(date)
     
-    log_msg.append("\n📊 Daily Missing Report:")
+    log_msg.append("\n   📋 Daily Missing Report:")
     for report in days_report:
-        log_msg.append(f"   {report}")
+        log_msg.append(f"      {report}")
+    
     if days_to_remove:
         df_cut = df_cut[~df_cut["date"].isin(days_to_remove)].copy()
-        log_msg.append(f"\n🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")    
+        log_msg.append(f"\n   🗑️ Removed {len(days_to_remove)} days with >15 missing timestamps")
+        log_msg.append(f"      Removed dates: {', '.join(map(str, days_to_remove[:5]))}{' ...' if len(days_to_remove) > 5 else ''}")
+        
         if df_cut.empty:
             return df_cut, "\n".join(log_msg) + "\n⚠️ No data remaining after filtering"
     else:
-        log_msg.append("\n✅ All days have ≤15 missing timestamps")
+        log_msg.append("\n   ✅ All days have ≤15 missing timestamps")
     
-    # Tính số ngày còn lại
+    # ====== BƯỚC 4: ĐIỀN CÁC TIMESTAMP CÒN THIẾU ======
+    log_msg.append("\n🔧 STEP 4: Filling missing timestamps...")
+    
     remaining_dates = sorted(df_cut["date"].unique())
-    log_msg.append(f"\n📈 {len(remaining_dates)} valid days remaining")
+    log_msg.append(f"   📈 {len(remaining_dates)} valid days remaining")
     
     df_cut = df_cut.drop(columns=["date"]).reset_index(drop=True)
     
     if len(remaining_dates) > 0:
+        # Tạo danh sách tất cả timestamp cần có
         all_times = []
         for date in remaining_dates:
             day_times = pd.date_range(
@@ -314,34 +452,50 @@ def clean_data(data, time_col_name="Time [UTC]"):
                 end=pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=50),
                 freq="10min"
             )
-            all_times.extend(day_times) 
+            all_times.extend(day_times)
+        
         all_times = pd.DatetimeIndex(all_times)
         missing_times = all_times.difference(df_cut[time_col_name])
         
         if len(missing_times) > 0:
-            log_msg.append(f"⚠️ Filling {len(missing_times)} missing timestamps in valid days")
+            log_msg.append(f"   ⚠️ Filling {len(missing_times)} missing timestamps in valid days")
             missing_df = pd.DataFrame({time_col_name: missing_times})
             df_full = pd.concat([df_cut, missing_df], ignore_index=True)
             df_full = df_full.sort_values(time_col_name).reset_index(drop=True)
+            
+            # Forward fill then backward fill
             df_full = df_full.ffill().bfill()
         else:
-            log_msg.append("✅ No missing timestamps in valid days")
+            log_msg.append("   ✅ No missing timestamps in valid days")
             df_full = df_cut.copy()
+        
+        # ====== BƯỚC 5: KIỂM TRA KẾT QUẢ CUỐI CÙNG ======
+        log_msg.append("\n✔️ STEP 5: Final validation...")
         
         df_full["date"] = df_full[time_col_name].dt.date
         samples_per_day = df_full.groupby("date").size()
         days_incomplete = samples_per_day[samples_per_day < 144]
+        
         if len(days_incomplete) > 0:
-            log_msg.append(f"⚠️ {len(days_incomplete)} days still have <144 samples")
+            log_msg.append(f"   ⚠️ {len(days_incomplete)} days still have <144 samples:")
+            for date, count in days_incomplete.items():
+                log_msg.append(f"      - {date}: {count}/144 samples")
         else:
-            log_msg.append(f"✅ All {len(samples_per_day)} days have exactly 144 samples")
+            log_msg.append(f"   ✅ All {len(samples_per_day)} days have exactly 144 samples")
         
         df_full = df_full.drop(columns=["date"])
     else:
         df_full = df_cut.copy()
     
+    # ====== SUMMARY ======
+    log_msg.append("\n" + "="*60)
+    log_msg.append("✅ DATA CLEANING COMPLETED")
+    log_msg.append(f"   📊 Final dataset: {len(df_full)} rows × {len(df_full.columns)} columns")
+    log_msg.append(f"   📅 Date range: {df_full[time_col_name].min().date()} to {df_full[time_col_name].max().date()}")
+    log_msg.append(f"   ⏱️ Time range: {df_full[time_col_name].min().time()} to {df_full[time_col_name].max().time()}")
+    log_msg.append("="*60)
+    
     return df_full, "\n".join(log_msg)
-
 # Formastting and Word Processing Functions
 def parse_excel_date(val):
     if pd.isna(val) or not val:
@@ -689,7 +843,18 @@ def process_word_report(excel_path, word_template_path, output_word_path, thresh
                     samples_above_50 = int(df_data[cols_above_50].sum().sum()) if cols_above_50 else 0
             else:
                 samples_above_50 = 0
-            
+
+            # if len(pdm_cols) > 0:
+            #     total_row = df_stats[df_stats["Date"].astype(str).str.contains("TOTAL|TỔNG", case=False, na=False)]
+            #     if len(total_row) > 0:
+            #         cols_above_50 = [col for col in pdm_cols if any(str(p) in col for p in ['55%', '65%', '75%', '85%', '95%', '100%'])]
+            #         samples_above_50 = int(total_row[cols_above_50].sum(axis=1).iloc[0]) if cols_above_50 else 0
+            #     else:
+            #         cols_above_50 = [col for col in pdm_cols if any(str(p) in col for p in ['55%', '65%', '75%', '85%', '95%', '100%'])]
+            #         samples_above_50 = int(df_data[cols_above_50].sum().sum()) if cols_above_50 else 0
+            # else:
+            #     samples_above_50 = 0
+
             valid_samples = thresholds_dict.get('valid_samples', 0) if thresholds_dict else 0
             total_samples = thresholds_dict.get('total_samples', 0) if thresholds_dict else 0
             
@@ -1474,6 +1639,9 @@ def make_voltage_harmonics_by_pdm(data, bins, labels):
             mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
         else:
             mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
+    # for (lower, upper), label in zip(bins, labels):
+    # # Tất cả các khoảng: lower < P <= upper
+    #     mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
         df_bin = data.loc[mask]
         count = int(mask.sum())
         for h in harmonic_orders:
@@ -1511,11 +1679,14 @@ def make_current_harmonics_by_pdm(data, bins, labels):
     phases = [("Phase A", "I1"), ("Phase B", "I2"), ("Phase C", "I3")]
     tdd_cols = ["TDD I1(AvgOn) [%]", "TDD I2(AvgOn) [%]", "TDD I3(AvgOn) [%]"]
     rows_ch = []
+    # for (lower, upper), label in zip(bins, labels):
+    #     if lower <= 0:
+    #         mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
+    #     else:
+    #         mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
     for (lower, upper), label in zip(bins, labels):
-        if lower <= 0:
-            mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
-        else:
-            mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
+    # Tất cả các khoảng: lower < P <= upper
+        mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
         df_bin = data.loc[mask]
         count = int(mask.sum())
         for h in harmonic_orders:
@@ -1564,6 +1735,13 @@ def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None, data_after_cle
     pdm_ranges = [(i*10, (i+1)*10) for i in range(10)]
     pdm_labels = [f"{i*10}%" for i in range(1, 11)]
     dates = sorted(data_copy["Date"].unique())
+    # data_copy["%Pdm"] = (data_copy["Ptot+(Avg) [W]"] / Pdm_max_val * 100)
+    # pdm_ranges = [
+    #     (0, 15), (15, 25), (25, 35), (35, 50), (50, 55),
+    #     (55, 65), (65, 75), (75, 85), (85, 95), (95, 100)
+    # ]
+    # pdm_labels = ["15%", "25%", "35%", "50%", "55%", "65%", "75%", "85%", "95%", "100%"]
+    # dates = sorted(data_copy["Date"].unique())
     # Phân loại ngày đạt yêu cầu và không đạt
     valid_dates = []
     invalid_dates = []
@@ -1589,17 +1767,24 @@ def make_daily_pdm_distribution(data, Pdm_max_val, data_raw=None, data_after_cle
     rows = []
     total_counts = [0] * len(pdm_ranges) 
 
+    # for idx, date in enumerate(dates, 1):
+    #     date_data = data_copy[data_copy["Date"] == date]
+    #     row = [idx, date.strftime("%d/%m/%Y")]
+    #     for i, (lower, upper) in enumerate(pdm_ranges):
+    #         if i == 0:
+    #             count = len(date_data[(date_data["%Pdm"] > 0) & (date_data["%Pdm"] <= upper)])
+    #         else:
+    #             count = len(date_data[(date_data["%Pdm"] > lower) & (date_data["%Pdm"] <= upper)])
+    #         row.append(count)
+    #         total_counts[i] += count
     for idx, date in enumerate(dates, 1):
         date_data = data_copy[data_copy["Date"] == date]
         row = [idx, date.strftime("%d/%m/%Y")]
         for i, (lower, upper) in enumerate(pdm_ranges):
-            if i == 0:
-                count = len(date_data[(date_data["%Pdm"] > 0) & (date_data["%Pdm"] <= upper)])
-            else:
-                count = len(date_data[(date_data["%Pdm"] > lower) & (date_data["%Pdm"] <= upper)])
+            # Tất cả các khoảng đều là: lower < P <= upper
+            count = len(date_data[(date_data["%Pdm"] > lower) & (date_data["%Pdm"] <= upper)])
             row.append(count)
             total_counts[i] += count
-        
         if date in valid_dates:
             row.append(f"✓ Valid ({len(date_data)} samples)")
         else:
@@ -2353,8 +2538,22 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                         lower = (i - 1) * 0.1 * Pdm_max_val
                         upper = i * 0.1 * Pdm_max_val
                         bins.append((lower, upper))
-                        labels.append(f"{i*10}%")
-                    
+#                     #     labels.append(f"{i*10}%")
+#                     daily_pdm_table, daily_summary_text, pdm_detailed_info, measurement_start_str, measurement_end_str = make_daily_pdm_distribution(data, Pdm_max_val, data_raw, data_after_clean)
+# # Định nghĩa bins không đều: 0-15, 15-25, 25-35, 35-50, 50-55, 55-65, 65-75, 75-85, 85-95, 95-100
+#                     bins = [
+#                         (0, 0.15 * Pdm_max_val),           # 0-15%
+#                         (0.15 * Pdm_max_val, 0.25 * Pdm_max_val),  # 15-25%
+#                         (0.25 * Pdm_max_val, 0.35 * Pdm_max_val),  # 25-35%
+#                         (0.35 * Pdm_max_val, 0.50 * Pdm_max_val),  # 35-50%
+#                         (0.50 * Pdm_max_val, 0.55 * Pdm_max_val),  # 50-55%
+#                         (0.55 * Pdm_max_val, 0.65 * Pdm_max_val),  # 55-65%
+#                         (0.65 * Pdm_max_val, 0.75 * Pdm_max_val),  # 65-75%
+#                         (0.75 * Pdm_max_val, 0.85 * Pdm_max_val),  # 75-85%
+#                         (0.85 * Pdm_max_val, 0.95 * Pdm_max_val),  # 85-95%
+#                         (0.95 * Pdm_max_val, 1.00 * Pdm_max_val),  # 95-100%
+#     ]
+#                     labels = ["15%", "25%", "35%", "50%", "55%", "65%", "75%", "85%", "95%", "100%"]
                     stat_summary_vh = make_voltage_harmonics_by_pdm(data, bins, labels)
                     stat_summary_ch = make_current_harmonics_by_pdm(data, bins, labels)
                     
@@ -2367,6 +2566,8 @@ if st.session_state.run_processing and not st.session_state.processing_complete:
                             mask = (data["Ptot+(Avg) [W]"] > 0) & (data["Ptot+(Avg) [W]"] <= upper)
                         else:
                             mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
+                    # for (lower, upper), label in zip(bins, labels):
+                    #     mask = (data["Ptot+(Avg) [W]"] > lower) & (data["Ptot+(Avg) [W]"] <= upper)
                         df_bin = data.loc[mask]
                         count = int(mask.sum())
                         
